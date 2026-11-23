@@ -16,6 +16,7 @@ workflows:
           - 'app/**'
           - 'build.gradle'
           - 'settings.gradle'
+          - 'gradle.properties'
           - 'gradle/**'
     environment:
       java: 17
