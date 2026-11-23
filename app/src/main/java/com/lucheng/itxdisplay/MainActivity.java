@@ -56,6 +56,8 @@ public class MainActivity extends Activity {
     private TextView deviceView;
     private TextView modeView;
     private TextView statsView;
+    private Button infoToggle;
+    private boolean videoInfoVisible = false;
     private int videoWidth = TARGET_WIDTH;
     private int videoHeight = TARGET_HEIGHT;
     private long fpsWindowStart = 0L;
@@ -167,6 +169,7 @@ public class MainActivity extends Activity {
         });
 
         LinearLayout panel = new LinearLayout(this);
+        panelView = panel;
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(14), dp(10), dp(14), dp(10));
         panel.setBackgroundColor(0xB5101318);
@@ -207,11 +210,12 @@ public class MainActivity extends Activity {
         statsView.setTextSize(13);
         statsView.setPadding(dp(10), dp(7), dp(10), dp(7));
         statsView.setBackgroundColor(0xB5101318);
+        statsView.setVisibility(View.GONE);
         FrameLayout.LayoutParams statsParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END);
-        statsParams.setMargins(dp(14), dp(14), dp(14), dp(14));
+        statsParams.setMargins(dp(14), dp(68), dp(14), dp(14));
         root.addView(statsView, statsParams);
 
         TextView target = new TextView(this);
@@ -226,10 +230,30 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.START);
         panelParams.setMargins(dp(14), dp(14), dp(14), dp(14));
+        panel.setVisibility(View.GONE);
         root.addView(panel, panelParams);
+
+        infoToggle = new Button(this);
+        infoToggle.setText("显示信息");
+        infoToggle.setOnClickListener(v -> setVideoInfoVisible(!videoInfoVisible));
+        FrameLayout.LayoutParams infoParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        infoParams.setMargins(dp(14), dp(14), dp(14), dp(14));
+        root.addView(infoToggle, infoParams);
 
         setContentView(root);
     }
+
+    private void setVideoInfoVisible(boolean visible) {
+        videoInfoVisible = visible;
+        if (panelView != null) panelView.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (statsView != null) statsView.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (infoToggle != null) infoToggle.setText(visible ? "隐藏信息" : "显示信息");
+    }
+
+    private LinearLayout panelView;
 
     private void registerUsbReceiver() {
         IntentFilter filter = new IntentFilter();
@@ -414,7 +438,6 @@ public class MainActivity extends Activity {
             renderedFrames = 0;
             fpsWindowStart = now;
             if (statsView != null) {
-                String input = modeView != null ? modeView.getText().toString() : "";
                 statsView.setText("显示：" + formatFps(displayedFps) + " FPS");
             }
         }
