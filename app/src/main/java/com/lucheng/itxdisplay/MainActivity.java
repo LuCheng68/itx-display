@@ -9,8 +9,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.SurfaceTexture;
-import android.graphics.Matrix;
-import android.graphics.RectF;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
@@ -53,6 +51,7 @@ public class MainActivity extends Activity {
 
     private UsbManager usbManager;
     private TextureView previewView;
+    private FrameLayout previewContainer;
     private TextView statusView;
     private TextView deviceView;
     private TextView modeView;
@@ -140,12 +139,18 @@ public class MainActivity extends Activity {
 
     private void buildUi() {
         FrameLayout root = new FrameLayout(this);
+        previewContainer = root;
         root.setBackgroundColor(0xFF000000);
 
+        // Match the source aspect ratio by sizing the TextureView itself.
+        // This keeps the full frame visible and exposes black letterbox bars.
         previewView = new TextureView(this);
-        root.addView(previewView, new FrameLayout.LayoutParams(
+        previewView.setOpaque(false);
+        FrameLayout.LayoutParams previewParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER);
+        root.addView(previewView, previewParams);
 
         previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
@@ -246,6 +251,8 @@ public class MainActivity extends Activity {
         infoParams.setMargins(dp(14), dp(14), dp(14), dp(14));
         root.addView(infoToggle, infoParams);
 
+        root.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                        oldLeft, oldTop, oldRight, oldBottom) -> applyAspectRatio());
         setContentView(root);
     }
 
@@ -436,13 +443,42 @@ public class MainActivity extends Activity {
     }
 
     private void applyAspectRatio() {
-        if (previewView == null || previewView.getWidth() <= 0 || previewView.getHeight() <= 0
+        if (previewContainer == null || previewView == null
                 || videoWidth <= 0 || videoHeight <= 0) return;
-        RectF source = new RectF(0, 0, videoWidth, videoHeight);
-        RectF destination = new RectF(0, 0, previewView.getWidth(), previewView.getHeight());
-        Matrix transform = new Matrix();
-        transform.setRectToRect(source, destination, Matrix.ScaleToFit.CENTER);
-        previewView.setTransform(transform);
+
+        int containerWidth = previewContainer.getWidth();
+        int containerHeight = previewContainer.getHeight();
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+
+        // Fit/contain: size the TextureView layout to the negotiated stream ratio.
+        // The root remains black, so any unused area becomes letterboxing.
+        double videoRatio = (double) videoWidth / (double) videoHeight;
+        double containerRatio = (double) containerWidth / (double) containerHeight;
+
+        int fittedWidth;
+        int fittedHeight;
+        if (containerRatio > videoRatio) {
+            fittedHeight = containerHeight;
+            fittedWidth = Math.max(1, (int) Math.round(fittedHeight * videoRatio));
+        } else {
+            fittedWidth = containerWidth;
+            fittedHeight = Math.max(1, (int) Math.round(fittedWidth / videoRatio));
+        }
+
+        ViewGroup.LayoutParams current = previewView.getLayoutParams();
+        if (!(current instanceof FrameLayout.LayoutParams)) return;
+
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) current;
+        if (params.width != fittedWidth || params.height != fittedHeight
+                || params.gravity != Gravity.CENTER) {
+            params.width = fittedWidth;
+            params.height = fittedHeight;
+            params.gravity = Gravity.CENTER;
+            previewView.setLayoutParams(params);
+        }
+
+        // No texture scaling matrix: the view itself now has the video aspect ratio.
+        previewView.setTransform(null);
     }
 
     private void updateDisplayFps() {

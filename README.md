@@ -1,10 +1,10 @@
-# ITX Display v0.4.2
+# ITX Display v0.4.3
 
 Android USB UVC capture display for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.4.2 (versionCode 6)
+- Application version: 0.4.3 (versionCode 7)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - minSdk: 24
@@ -24,8 +24,7 @@ Android USB UVC capture display for Xiaomi Pad 5 Pro (Android 15).
 - Read the renderable MJPEG/YUYV modes advertised by the capture device.
 - Request 1920x1080 at 50 FPS with MJPEG preferred, then show the actual negotiated mode.
 - Render the UVC stream into a TextureView.
-- Keep the full video frame visible by sizing the TextureView to the negotiated stream aspect ratio; unused space remains black (no stretch, no crop).
-- Set the SurfaceTexture buffer size to the target mode before streaming, then update it to the actual negotiated mode.
+- Keep the full video frame visible by sizing the TextureView layout itself to the negotiated stream aspect ratio; the parent view supplies black letterbox bars (no stretch, no crop).
 - Keep device details and performance information hidden by default; use the top-right “显示信息” button to reveal or hide the information panel.
 - Show the negotiated input mode and a TextureView update-rate estimate in the information overlay.
 - Stop and release the UVC camera, Surface and USB connection as the app is paused or the surface is destroyed.
@@ -92,3 +91,11 @@ Android requires the CAMERA runtime permission and per-device USB permission for
 ## License notes
 
 droiduvc is Apache-2.0, and its bundled native dependencies have their own licenses. Review the upstream notices and LGPL obligations before redistributing a production APK.
+
+## v0.4.3 preview aspect-ratio fix
+
+- Replaced the TextureView content matrix with a centered layout size calculated from the actual negotiated UVC width and height.
+- The preview view now occupies only the fitted frame; the black root view remains visible as letterboxing on a screen with a different aspect ratio.
+- Recalculates the fitted bounds when the root viewport changes.
+- Keeps the UVC duplicate-open guard and does not modify SurfaceTexture buffer dimensions.
+
