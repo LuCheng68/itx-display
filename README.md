@@ -1,10 +1,10 @@
-# ITX Display v0.4.1
+# ITX Display v0.4.2
 
 Android USB UVC capture display for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.4.1 (versionCode 5)
+- Application version: 0.4.2 (versionCode 6)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - minSdk: 24
@@ -43,6 +43,15 @@ The displayed FPS is counted from TextureView frame-update callbacks. It is a us
 - Separated the active-preview state from the in-progress-opening state so rescan does not treat a running camera as idle.
 - Adjusted preview sizing to match the actual negotiated video aspect ratio and keep letterboxing black.
 - Set the `SurfaceTexture` default buffer dimensions for the requested stream and then for the negotiated stream mode.
+
+## v0.4.2 startup stability changes
+
+- Restored the original full-size TextureView with the centered aspect-ratio matrix fit used before v0.4.1.
+- Removed the additional SurfaceTexture buffer-size mutations introduced in v0.4.1, including the update after the UVC stream starts.
+- Kept the guard that prevents opening a second UVC session when the current preview is already opening or running.
+- Guarded camera-executor submissions during Activity teardown to avoid rejected tasks from late SurfaceTexture lifecycle callbacks.
+
+The app still needs to be built and tested on the Xiaomi Pad 5 Pro. These changes are a conservative startup-stability rollback, not proof that the reported crash is fixed. If the app still exits at launch, collect Logcat from the affected device to identify the exact exception.
 
 ## Hardware validation still required
 
