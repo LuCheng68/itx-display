@@ -64,12 +64,23 @@ ITX Display is an Android display and video-processing application centered on *
 
 1. Make UVC capture, preview, reconnect and frame delivery reliable.
 2. Measure and reduce end-to-end latency; build the frame-timing and queue infrastructure needed by real-time processing.
-3. **Prioritize frame interpolation adaptation and real-time feasibility testing.**
-4. Add super-resolution as the next major image-processing capability.
-5. Integrate and tune the capture, interpolation, super-resolution and display stages together.
-6. Add audio capture, playback and A/V synchronization last, after the visual pipeline is stable.
+3. Establish correct HDMI/UVC color interpretation (pixel format, Full/Limited range, and color matrix) as part of the base video pipeline.
+4. **Prioritize frame interpolation adaptation and real-time feasibility testing.**
+5. Add super-resolution as the next major image-processing capability.
+6. Integrate and tune the capture, interpolation, super-resolution and display stages together.
+7. Add audio capture, playback and A/V synchronization last, after the visual pipeline is stable.
 
 Frame interpolation and super-resolution are planned capabilities, not yet implemented. Their real-time performance and visual quality must be measured on the target tablet before being advertised as supported.
+
+### HDMI / UVC color compatibility baseline
+
+A real-device test found that the captured video looked over-bright when the PC graphics output was set to RGB: light gray and white became difficult to distinguish. The app UI remained normal, and other USB camera apps showed the same video issue. Switching the graphics output to YCbCr restored the captured image. At 1080p, the user observed little apparent detail difference between YCbCr 4:4:4, 4:2:2 and 4:2:0 in the tested content.
+
+This is a confirmed workaround, not yet a confirmed root-cause diagnosis. The graphics driver does not expose a usable RGB range selector in this setup. The roadmap therefore includes software-side RGB compatibility and range/matrix validation without requiring the PC to stop using RGB.
+
+Implementation must inspect the actual UVC payload format (for example MJPEG or YUY2/YUYV) and any reliable color metadata. RGB vs. YCbCr encoding and Full vs. Limited quantization range are separate properties. If reliable metadata is unavailable, provide explicit manual choices rather than claiming content-only histogram analysis can always detect the correct range. Validate with grayscale ramps and raw UVC frame values before enabling corrections.
+
+Color normalization belongs before frame interpolation and super-resolution. A GPU shader path is preferred to avoid CPU per-pixel work and unnecessary frame copies. If the capture card has already clipped highlight values before USB delivery, software cannot recover those lost gray levels; keep the currently verified YCbCr path as a compatibility fallback.
 
 ## Roadmap
 
