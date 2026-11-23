@@ -9,6 +9,14 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
+      cancel_previous_builds: true
+    when:
+      changeset:
+        includes:
+          - 'app/**'
+          - 'build.gradle'
+          - 'settings.gradle'
+          - 'gradle/**'
     environment:
       java: 17
     scripts:
