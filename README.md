@@ -69,7 +69,12 @@ APK output:
 
 ## Codemagic
 
-The repository root contains `codemagic.yaml`. It is configured for a macOS M2 instance and the `itx-display-debug` workflow. Add this repository in Codemagic, select the `main` branch and run the workflow. The debug APK is collected as a build artifact.
+The repository root contains `codemagic.yaml`. It is configured for a macOS M2 instance and the `itx-display-debug` workflow.
+
+- Pushes to the `main` branch are configured to trigger the debug APK workflow.
+- The repository must be connected in Codemagic and its GitHub webhook must be enabled for automatic triggering.
+- A manual build can also be started in Codemagic by selecting the `main` branch and the `itx-display-debug` workflow.
+- The debug APK is collected as a build artifact.
 
 ## USB permissions
 
