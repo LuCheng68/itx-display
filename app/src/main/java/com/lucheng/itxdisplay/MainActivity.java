@@ -34,6 +34,7 @@ import com.mikimn.droiduvc.CameraControls;
 import com.mikimn.droiduvc.CameraInfo;
 import com.mikimn.droiduvc.Control;
 import com.mikimn.droiduvc.ControlId;
+import com.mikimn.droiduvc.ControlRange;
 import com.mikimn.droiduvc.StreamFormat;
 import com.mikimn.droiduvc.StreamMode;
 import com.mikimn.droiduvc.UvcCamera;
@@ -627,7 +628,23 @@ public class MainActivity extends Activity {
                                 values.append("不支持/未声明");
                             } else {
                                 try {
-                                    values.append(control.getValue());
+                                    int currentValue = control.getValue();
+                                    values.append("当前=").append(currentValue);
+                                    try {
+                                        ControlRange range = control.getRange();
+                                        if (range != null) {
+                                            values.append("；范围=").append(range.getMin())
+                                                    .append("～").append(range.getMax())
+                                                    .append("；步进=").append(range.getStep())
+                                                    .append("；设备默认=").append(range.getDefault());
+                                        } else {
+                                            values.append("；范围信息不可用");
+                                        }
+                                    } catch (Exception rangeError) {
+                                        values.append("；范围读取失败（")
+                                                .append(rangeError.getClass().getSimpleName())
+                                                .append("：").append(safeErrorMessage(rangeError)).append("）");
+                                    }
                                 } catch (Exception e) {
                                     values.append("读取失败（").append(e.getClass().getSimpleName())
                                             .append("：").append(safeErrorMessage(e)).append("）");
