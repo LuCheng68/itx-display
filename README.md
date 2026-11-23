@@ -1,10 +1,10 @@
-# ITX Display v0.4.4
+# ITX Display v0.4.5
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.4.4 (versionCode 8)
+- Application version: 0.4.5 (versionCode 9)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - minSdk: 24
@@ -135,3 +135,11 @@ droiduvc is Apache-2.0, and its bundled native dependencies have their own licen
 - Added a copy-diagnostics action so a device report can be shared for troubleshooting.
 - The report explicitly states that droiduvc 0.2.1 converts MJPEG/YUYV frames to RGB in its native callback and does not expose raw UVC frame bytes or a reliable HDMI RGB Full/Limited metadata flag to the app.
 - This is a diagnostic foundation, not an RGB range correction feature. Software correction must not be enabled until the actual conversion path and grayscale ramp values are validated. If the capture card has already clipped highlights before USB delivery, software cannot restore them.
+
+
+## v0.4.5 diagnostics panel layout fix
+
+- Limited the information panel to the visible viewport: up to 78% of the available height and 760 dp wide, with margins.
+- Put long UVC mode and device diagnostics text inside a vertical ScrollView.
+- Kept the read-color-controls, copy-diagnostics-report and rescan buttons in a fixed footer, so the copy action remains visible without scrolling the report.
+- Kept the information panel hidden by default and retained the existing video preview and UVC session behavior.

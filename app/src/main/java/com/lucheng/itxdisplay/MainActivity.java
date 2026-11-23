@@ -27,6 +27,7 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.mikimn.droiduvc.CameraControls;
@@ -192,55 +193,95 @@ public class MainActivity extends Activity {
         panelView = panel;
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(14), dp(10), dp(14), dp(10));
-        panel.setBackgroundColor(0xB5101318);
+        panel.setBackgroundColor(0xE5101318);
+        panel.setElevation(dp(8));
+
+        // Long device diagnostics scroll independently; the action buttons remain pinned
+        // to the bottom of the panel and are always reachable.
+        ScrollView panelScroll = new ScrollView(this);
+        panelScroll.setFillViewport(false);
+        panelScroll.setVerticalScrollBarEnabled(true);
+        panelScroll.setOverScrollMode(View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+
+        LinearLayout panelContent = new LinearLayout(this);
+        panelContent.setOrientation(LinearLayout.VERTICAL);
+        panelScroll.addView(panelContent, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(panelScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         TextView title = new TextView(this);
         title.setText("ITX Display  ·  USB 视频输入");
         title.setTextColor(0xFFFFFFFF);
         title.setTextSize(19);
-        panel.addView(title);
+        panelContent.addView(title);
 
         statusView = new TextView(this);
         statusView.setText("正在检查 USB 摄像设备…");
         statusView.setTextColor(0xFFD7E0ED);
         statusView.setTextSize(14);
         statusView.setPadding(0, dp(7), 0, dp(5));
-        panel.addView(statusView);
+        panelContent.addView(statusView);
 
         deviceView = new TextView(this);
         deviceView.setTextColor(0xFFFFFFFF);
         deviceView.setTextSize(13);
         deviceView.setPadding(0, dp(4), 0, dp(4));
-        panel.addView(deviceView);
+        panelContent.addView(deviceView);
 
         modeView = new TextView(this);
         modeView.setTextColor(0xFF9FB2C9);
         modeView.setTextSize(12);
         modeView.setPadding(0, dp(4), 0, dp(8));
-        panel.addView(modeView);
+        panelContent.addView(modeView);
 
         diagnosticsView = new TextView(this);
-        diagnosticsView.setText("UVC 诊断：连接设备后读取。\n此功能只读取信息，不会修改采集卡参数。");
+        diagnosticsView.setText("UVC 诊断：连接设备后读取。\\n此功能只读取信息，不会修改采集卡参数。");
         diagnosticsView.setTextColor(0xFFB8C7D9);
         diagnosticsView.setTextSize(11);
         diagnosticsView.setPadding(0, dp(4), 0, dp(8));
-        panel.addView(diagnosticsView);
+        panelContent.addView(diagnosticsView);
+
+        TextView target = new TextView(this);
+        target.setText("目标：1920×1080 · 50 FPS · MJPEG 优先 · 无音频");
+        target.setTextColor(0xFF9AA8BA);
+        target.setTextSize(11);
+        target.setPadding(0, dp(5), 0, dp(2));
+        panelContent.addView(target);
+
+        // Sticky actions: unlike the diagnostic text, these never scroll out of view.
+        LinearLayout actionRow = new LinearLayout(this);
+        actionRow.setOrientation(LinearLayout.HORIZONTAL);
 
         colorReadButton = new Button(this);
         colorReadButton.setText("读取 UVC 色彩控件");
+        colorReadButton.setTextSize(12);
+        colorReadButton.setAllCaps(false);
+        colorReadButton.setMinWidth(0);
         colorReadButton.setEnabled(false);
         colorReadButton.setOnClickListener(v -> readColorControlValues());
-        panel.addView(colorReadButton);
+        actionRow.addView(colorReadButton, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         copyDiagnosticsButton = new Button(this);
         copyDiagnosticsButton.setText("复制设备诊断报告");
+        copyDiagnosticsButton.setTextSize(12);
+        copyDiagnosticsButton.setAllCaps(false);
+        copyDiagnosticsButton.setMinWidth(0);
         copyDiagnosticsButton.setOnClickListener(v -> copyDiagnosticsReport());
-        panel.addView(copyDiagnosticsButton);
+        actionRow.addView(copyDiagnosticsButton, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        panel.addView(actionRow);
 
         Button scanButton = new Button(this);
         scanButton.setText("重新扫描 USB 设备");
+        scanButton.setTextSize(12);
+        scanButton.setAllCaps(false);
         scanButton.setOnClickListener(v -> scanDevices());
-        panel.addView(scanButton);
+        panel.addView(scanButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         statsView = new TextView(this);
         statsView.setText("显示 FPS：--");
@@ -255,13 +296,6 @@ public class MainActivity extends Activity {
                 Gravity.TOP | Gravity.END);
         statsParams.setMargins(dp(14), dp(68), dp(14), dp(14));
         root.addView(statsView, statsParams);
-
-        TextView target = new TextView(this);
-        target.setText("目标：1920×1080 · 50 FPS · MJPEG 优先 · 无音频");
-        target.setTextColor(0xFF9AA8BA);
-        target.setTextSize(11);
-        target.setPadding(0, dp(5), 0, 0);
-        panel.addView(target);
 
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -279,10 +313,14 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.END);
         infoParams.setMargins(dp(14), dp(14), dp(14), dp(14));
+        infoToggle.setElevation(dp(10));
         root.addView(infoToggle, infoParams);
 
         root.addOnLayoutChangeListener((view, left, top, right, bottom,
-                                        oldLeft, oldTop, oldRight, oldBottom) -> applyAspectRatio());
+                                        oldLeft, oldTop, oldRight, oldBottom) -> {
+            applyAspectRatio();
+            updateInfoPanelBounds();
+        });
         setContentView(root);
     }
 
@@ -632,6 +670,31 @@ public class MainActivity extends Activity {
         }
         clipboard.setPrimaryClip(ClipData.newPlainText("ITX Display UVC diagnostics", diagnosticsReport));
         showStatus("UVC 诊断报告已复制。");
+    }
+
+    private void updateInfoPanelBounds() {
+        if (previewContainer == null || panelView == null) return;
+        int viewportWidth = previewContainer.getWidth();
+        int viewportHeight = previewContainer.getHeight();
+        if (viewportWidth <= 0 || viewportHeight <= 0) return;
+
+        int horizontalMargin = dp(14);
+        int availableWidth = Math.max(dp(220), viewportWidth - horizontalMargin * 2);
+        int panelWidth = Math.min(dp(760), availableWidth);
+        int availableHeight = Math.max(dp(220), viewportHeight - horizontalMargin * 2);
+        int panelHeight = Math.min((int) (viewportHeight * 0.78f), availableHeight);
+
+        ViewGroup.LayoutParams rawParams = panelView.getLayoutParams();
+        if (!(rawParams instanceof FrameLayout.LayoutParams)) return;
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) rawParams;
+        if (params.width != panelWidth || params.height != panelHeight) {
+            params.width = panelWidth;
+            params.height = panelHeight;
+            params.gravity = Gravity.TOP | Gravity.START;
+            params.setMargins(horizontalMargin, horizontalMargin,
+                    horizontalMargin, horizontalMargin);
+            panelView.setLayoutParams(params);
+        }
     }
 
     private void applyAspectRatio() {
