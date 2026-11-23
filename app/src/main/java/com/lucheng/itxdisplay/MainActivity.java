@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -27,6 +29,10 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.mikimn.droiduvc.CameraControls;
+import com.mikimn.droiduvc.CameraInfo;
+import com.mikimn.droiduvc.Control;
+import com.mikimn.droiduvc.ControlId;
 import com.mikimn.droiduvc.StreamFormat;
 import com.mikimn.droiduvc.StreamMode;
 import com.mikimn.droiduvc.UvcCamera;
@@ -56,7 +62,13 @@ public class MainActivity extends Activity {
     private TextView deviceView;
     private TextView modeView;
     private TextView statsView;
+    private TextView diagnosticsView;
+    private Button colorReadButton;
+    private Button copyDiagnosticsButton;
     private Button infoToggle;
+    private volatile String baseDiagnosticsReport = "尚未连接 UVC 设备。";
+    private volatile String diagnosticsReport = "尚未连接 UVC 设备。";
+    private volatile boolean readingColorControls = false;
     private boolean videoInfoVisible = false;
     private int videoWidth = TARGET_WIDTH;
     private int videoHeight = TARGET_HEIGHT;
@@ -206,6 +218,24 @@ public class MainActivity extends Activity {
         modeView.setTextSize(12);
         modeView.setPadding(0, dp(4), 0, dp(8));
         panel.addView(modeView);
+
+        diagnosticsView = new TextView(this);
+        diagnosticsView.setText("UVC 诊断：连接设备后读取。\n此功能只读取信息，不会修改采集卡参数。");
+        diagnosticsView.setTextColor(0xFFB8C7D9);
+        diagnosticsView.setTextSize(11);
+        diagnosticsView.setPadding(0, dp(4), 0, dp(8));
+        panel.addView(diagnosticsView);
+
+        colorReadButton = new Button(this);
+        colorReadButton.setText("读取 UVC 色彩控件");
+        colorReadButton.setEnabled(false);
+        colorReadButton.setOnClickListener(v -> readColorControlValues());
+        panel.addView(colorReadButton);
+
+        copyDiagnosticsButton = new Button(this);
+        copyDiagnosticsButton.setText("复制设备诊断报告");
+        copyDiagnosticsButton.setOnClickListener(v -> copyDiagnosticsReport());
+        panel.addView(copyDiagnosticsButton);
 
         Button scanButton = new Button(this);
         scanButton.setText("重新扫描 USB 设备");
@@ -413,6 +443,9 @@ public class MainActivity extends Activity {
                 mainHandler.post(this::applyAspectRatio);
                 final String modeText = describeMode(actual);
                 final String supportedText = summarizeModes(modes);
+                final String cameraDiagnostics = buildCameraDiagnostics(newCamera, actual, modes);
+                baseDiagnosticsReport = cameraDiagnostics;
+                diagnosticsReport = cameraDiagnostics;
                 final String cameraStatus = "实时预览已启动";
                 mainHandler.post(() -> {
                     if (token != sessionGeneration) return;
@@ -424,6 +457,8 @@ public class MainActivity extends Activity {
                     if (statsView != null) {
                         statsView.setText("输入：" + actual.getFps() + " FPS（协商值）\n显示：" + formatFps(displayedFps));
                     }
+                    if (diagnosticsView != null) diagnosticsView.setText(cameraDiagnostics);
+                    if (colorReadButton != null) colorReadButton.setEnabled(true);
                 });
             } catch (Exception e) {
                 previewRunning = false;
@@ -440,6 +475,163 @@ public class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private String buildCameraDiagnostics(UvcCamera activeCamera,
+                                           StreamMode actual,
+                                           List<StreamMode> modes) {
+        StringBuilder report = new StringBuilder();
+        report.append("ITX Display UVC 诊断\n");
+        report.append("实际模式：").append(describeMode(actual)).append("\n");
+        report.append("设备报告模式数：").append(modes == null ? 0 : modes.size()).append("\n");
+
+        try {
+            CameraInfo info = activeCamera.getInfo();
+            report.append("厂商：").append(orUnknown(info.getManufacturer())).append("\n");
+            report.append("产品：").append(orUnknown(info.getProduct())).append("\n");
+            report.append("VID:PID：")
+                    .append(info.getVendorId() == null ? "--" : hex(info.getVendorId()))
+                    .append(":")
+                    .append(info.getProductId() == null ? "--" : hex(info.getProductId()))
+                    .append("\n");
+            report.append("UVC 版本：").append(orUnknown(info.getUvcVersion())).append("\n");
+        } catch (Exception e) {
+            report.append("设备描述符读取失败：").append(e.getClass().getSimpleName())
+                    .append(" / ").append(safeErrorMessage(e)).append("\n");
+        }
+
+        try {
+            CameraControls controls = activeCamera.getControls();
+            report.append("色彩相关 UVC 控件支持情况：\n");
+            ControlId[] colorIds = {
+                    ControlId.BRIGHTNESS,
+                    ControlId.CONTRAST,
+                    ControlId.GAMMA,
+                    ControlId.SATURATION,
+                    ControlId.HUE,
+                    ControlId.GAIN,
+                    ControlId.BACKLIGHT_COMPENSATION
+            };
+            for (ControlId id : colorIds) {
+                report.append("  ").append(controlLabel(id)).append("：")
+                        .append(controls.get(id) == null ? "不支持/未声明" : "设备声明支持")
+                        .append("\n");
+            }
+        } catch (Exception e) {
+            report.append("UVC 控件能力读取失败：").append(e.getClass().getSimpleName())
+                    .append(" / ").append(safeErrorMessage(e)).append("\n");
+        }
+
+        report.append("\n色彩元数据限制：当前 droiduvc API 未向应用暴露原始 UVC 帧、")
+                .append("HDMI 输入色彩格式或可靠的 Full/Limited 范围标记。\n");
+        report.append("当前处理：droiduvc 原生层先将 MJPEG/YUYV 转为 RGB，再输出到 Android Surface。\n");
+        report.append("注意：本报告只读取设备信息和控件能力，不会修改采集卡设置。");
+        return report.toString();
+    }
+
+    private String orUnknown(String value) {
+        return value == null || value.trim().isEmpty() ? "未知/设备未提供" : value;
+    }
+
+    private String safeErrorMessage(Exception e) {
+        String message = e.getMessage();
+        return message == null || message.trim().isEmpty() ? "无详细错误信息" : message;
+    }
+
+    private String controlLabel(ControlId id) {
+        switch (id) {
+            case BRIGHTNESS: return "亮度";
+            case CONTRAST: return "对比度";
+            case GAMMA: return "伽马";
+            case SATURATION: return "饱和度";
+            case HUE: return "色调";
+            case GAIN: return "增益";
+            case BACKLIGHT_COMPENSATION: return "背光补偿";
+            default: return id.name();
+        }
+    }
+
+    private void readColorControlValues() {
+        if (!previewRunning || executorShutdown || readingColorControls) {
+            showStatus("请先连接并启动 UVC 预览。");
+            return;
+        }
+
+        final int token = sessionGeneration;
+        readingColorControls = true;
+        if (colorReadButton != null) colorReadButton.setEnabled(false);
+        showStatus("正在后台读取 UVC 色彩控件（只读）…");
+
+        try {
+            cameraExecutor.execute(() -> {
+                String valueReport;
+                UvcCamera activeCamera = camera;
+                if (activeCamera == null || token != sessionGeneration) {
+                    valueReport = "色彩控件读取已取消：UVC 会话已结束。";
+                } else {
+                    StringBuilder values = new StringBuilder("色彩相关 UVC 控件当前值（设备原始值）：\n");
+                    try {
+                        CameraControls controls = activeCamera.getControls();
+                        ControlId[] colorIds = {
+                                ControlId.BRIGHTNESS,
+                                ControlId.CONTRAST,
+                                ControlId.GAMMA,
+                                ControlId.SATURATION,
+                                ControlId.HUE,
+                                ControlId.GAIN,
+                                ControlId.BACKLIGHT_COMPENSATION
+                        };
+
+                        for (ControlId id : colorIds) {
+                            Control control = controls.get(id);
+                            values.append(controlLabel(id)).append("：");
+                            if (control == null) {
+                                values.append("不支持/未声明");
+                            } else {
+                                try {
+                                    values.append(control.getValue());
+                                } catch (Exception e) {
+                                    values.append("读取失败（").append(e.getClass().getSimpleName())
+                                            .append("：").append(safeErrorMessage(e)).append("）");
+                                }
+                            }
+                            values.append("\n");
+                        }
+                    } catch (Exception e) {
+                        values.append("控件读取失败：").append(e.getClass().getSimpleName())
+                                .append(" / ").append(safeErrorMessage(e));
+                    }
+                    valueReport = values.toString();
+                }
+
+                final String resultText = valueReport;
+                mainHandler.post(() -> {
+                    readingColorControls = false;
+                    if (token != sessionGeneration) {
+                        if (colorReadButton != null) colorReadButton.setEnabled(previewRunning);
+                        return;
+                    }
+                    diagnosticsReport = baseDiagnosticsReport + "\n\n" + resultText;
+                    if (diagnosticsView != null) diagnosticsView.setText(diagnosticsReport);
+                    if (colorReadButton != null) colorReadButton.setEnabled(previewRunning);
+                    showStatus("UVC 色彩控件读取完成；没有修改采集卡参数。");
+                });
+            });
+        } catch (RejectedExecutionException e) {
+            readingColorControls = false;
+            if (colorReadButton != null) colorReadButton.setEnabled(previewRunning);
+            showStatus("诊断任务未能启动，请稍后重试。");
+        }
+    }
+
+    private void copyDiagnosticsReport() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            showStatus("无法访问系统剪贴板。");
+            return;
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText("ITX Display UVC diagnostics", diagnosticsReport));
+        showStatus("UVC 诊断报告已复制。");
     }
 
     private void applyAspectRatio() {
@@ -520,6 +712,8 @@ public class MainActivity extends Activity {
         sessionGeneration++;
         opening = false;
         previewRunning = false;
+        readingColorControls = false;
+        if (colorReadButton != null) colorReadButton.setEnabled(false);
         fpsWindowStart = 0L;
         renderedFrames = 0;
         displayedFps = 0f;
