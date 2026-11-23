@@ -493,7 +493,7 @@ Java_com_mikimn_droiduvc_NativeUvc_stop(JNIEnv *, jobject, jlong handle) {
 }
 
 JNIEXPORT void JNICALL
-Java_com_mikimn_droiduvc_NativeUvc_close(JNIEnv *, jobject, jlong handle) {
+Java_com_mikimn_droiduvc_NativeUvc_close(JNIEnv *env, jobject, jlong handle) {
     auto *cam = reinterpret_cast<Camera *>(handle);
     uvc_stop_streaming(cam->devh);
     releaseWindow(cam);

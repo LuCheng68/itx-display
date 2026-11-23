@@ -85,15 +85,23 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
             return;
         }
 
+        // If the analysis queue is full, evict its oldest frame before enqueueing
+        // the incoming one. This ensures the pipeline is latest-frame-first rather than
+        // accidentally dropping the current frame while preserving stale queued frames.
         FrameSlot slot = freeSlots.poll();
         if (slot == null) {
-            // Keep the newest frames. An unprocessed old frame is less useful than the current one.
             slot = readySlots.poll();
             if (slot == null) {
                 droppedCount.incrementAndGet();
                 return;
             }
             droppedCount.incrementAndGet();
+        } else if (readySlots.remainingCapacity() == 0) {
+            FrameSlot stale = readySlots.poll();
+            if (stale != null) {
+                droppedCount.incrementAndGet();
+                freeSlots.offer(stale);
+            }
         }
 
         try {
