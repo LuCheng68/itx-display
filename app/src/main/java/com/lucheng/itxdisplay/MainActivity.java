@@ -239,7 +239,7 @@ public class MainActivity extends Activity {
         panelContent.addView(modeView);
 
         diagnosticsView = new TextView(this);
-        diagnosticsView.setText("UVC 诊断：连接设备后读取。\\n此功能只读取信息，不会修改采集卡参数。");
+        diagnosticsView.setText("UVC 诊断：连接设备后读取。\n此功能只读取信息，不会修改采集卡参数。");
         diagnosticsView.setTextColor(0xFFB8C7D9);
         diagnosticsView.setTextSize(11);
         diagnosticsView.setPadding(0, dp(4), 0, dp(8));
@@ -505,7 +505,7 @@ public class MainActivity extends Activity {
                     if (statsView != null) {
                         statsView.setText("输入：" + actual.getFps() + " FPS（协商值）\n显示：" + formatFps(displayedFps));
                     }
-                    if (diagnosticsView != null) diagnosticsView.setText(cameraDiagnostics + "\\n\\n" + activeRawPipeline.getSummary());
+                    if (diagnosticsView != null) diagnosticsView.setText(cameraDiagnostics + "\n\n" + activeRawPipeline.getSummary());
                     if (colorReadButton != null) colorReadButton.setEnabled(true);
                 });
             } catch (Exception e) {
@@ -696,7 +696,7 @@ public class MainActivity extends Activity {
         }
         RawUvcFramePipeline pipeline = rawFramePipeline;
         String rawSummary = pipeline == null ? "UVC 原始帧：--" : pipeline.getDetailedReport();
-        String report = diagnosticsReport + "\\n\\n" + rawSummary;
+        String report = diagnosticsReport + "\n\n" + rawSummary;
         clipboard.setPrimaryClip(ClipData.newPlainText("ITX Display UVC diagnostics", report));
         showStatus("UVC 诊断报告已复制。");
     }
@@ -777,10 +777,10 @@ public class MainActivity extends Activity {
             RawUvcFramePipeline pipeline = rawFramePipeline;
             String rawSummary = pipeline == null ? "UVC 原始帧：--" : pipeline.getSummary();
             if (statsView != null) {
-                statsView.setText("显示：" + formatFps(displayedFps) + " FPS\\n" + rawSummary);
+                statsView.setText("显示：" + formatFps(displayedFps) + " FPS\n" + rawSummary);
             }
             if (diagnosticsView != null && previewRunning) {
-                diagnosticsView.setText(baseDiagnosticsReport + "\\n\\n" + rawSummary);
+                diagnosticsView.setText(baseDiagnosticsReport + "\n\n" + rawSummary);
             }
         }
     }

@@ -189,6 +189,10 @@ void dispatchRawFrame(Camera *cam, uvc_frame_t *frame) {
     }
     if (payload != nullptr) env->DeleteLocalRef(payload);
     if (listener != nullptr) env->DeleteLocalRef(listener);
+    if (env->ExceptionCheck()) {
+        LOGE("JNI exception while dispatching raw UVC frame");
+        env->ExceptionClear();
+    }
     if (detachThread) cam->javaVm->DetachCurrentThread();
 }
 
