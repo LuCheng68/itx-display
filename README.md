@@ -1,10 +1,10 @@
-# ITX Display v0.4.0
+# ITX Display v0.4.1
 
 Android USB UVC capture display for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.4.0 (versionCode 4)
+- Application version: 0.4.1 (versionCode 5)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - minSdk: 24
@@ -24,15 +24,25 @@ Android USB UVC capture display for Xiaomi Pad 5 Pro (Android 15).
 - Read the renderable MJPEG/YUYV modes advertised by the capture device.
 - Request 1920x1080 at 50 FPS with MJPEG preferred, then show the actual negotiated mode.
 - Render the UVC stream into a TextureView.
-- Keep the full video frame visible using centered aspect-ratio fitting; unused space remains black (no stretch, no crop).
+- Keep the full video frame visible by sizing the TextureView to the negotiated stream aspect ratio; unused space remains black (no stretch, no crop).
+- Set the SurfaceTexture buffer size to the target mode before streaming, then update it to the actual negotiated mode.
 - Keep device details and performance information hidden by default; use the top-right “显示信息” button to reveal or hide the information panel.
 - Show the negotiated input mode and a TextureView update-rate estimate in the information overlay.
 - Stop and release the UVC camera, Surface and USB connection as the app is paused or the surface is destroyed.
 - Rescan when USB devices attach or detach.
+- Make manual USB rescans idempotent: when the selected UVC preview is already opening or running, rescanning does not open a second UVC session or interrupt the active preview.
+- Close the previous UVC camera, Surface and USB connection on the serialized camera executor before opening a replacement session.
 
 ## Performance metric note
 
 The displayed FPS is counted from TextureView frame-update callbacks. It is a useful display update-rate estimate, not a hardware-level measurement of USB transport FPS or a guarantee that every input frame reached the display.
+
+## v0.4.1 fixes
+
+- Fixed repeated UVC open attempts during manual USB rescans, which could return `Busy (-6)` while the preview session was already active.
+- Separated the active-preview state from the in-progress-opening state so rescan does not treat a running camera as idle.
+- Adjusted preview sizing to match the actual negotiated video aspect ratio and keep letterboxing black.
+- Set the `SurfaceTexture` default buffer dimensions for the requested stream and then for the negotiated stream mode.
 
 ## Hardware validation still required
 
