@@ -1,6 +1,6 @@
 # ITX Display v0.4.3
 
-Android USB UVC capture display for Xiaomi Pad 5 Pro (Android 15).
+Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
@@ -56,12 +56,28 @@ The app still needs to be built and tested on the Xiaomi Pad 5 Pro. These change
 
 The live UVC path has been exercised on the target setup, but the current source update still needs a fresh cloud build and installation test. The MS2130/Hagibis capture card must be checked for actual supported modes, negotiated resolution/frame rate, sustained frame rate and stability. A requested 1080p50 mode does not guarantee the capture card exposes or can sustain that mode.
 
+## Product positioning
+
+ITX Display is an Android display and video-processing application centered on **low-latency USB UVC capture, real-time frame interpolation, and super-resolution**. The goal is not only to show the capture-card signal, but to build a low-latency video pipeline that can optionally generate intermediate frames and enhance image detail on the tablet.
+
+### Development priority
+
+1. Make UVC capture, preview, reconnect and frame delivery reliable.
+2. Measure and reduce end-to-end latency; build the frame-timing and queue infrastructure needed by real-time processing.
+3. **Prioritize frame interpolation adaptation and real-time feasibility testing.**
+4. Add super-resolution as the next major image-processing capability.
+5. Integrate and tune the capture, interpolation, super-resolution and display stages together.
+6. Add audio capture, playback and A/V synchronization last, after the visual pipeline is stable.
+
+Frame interpolation and super-resolution are planned capabilities, not yet implemented. Their real-time performance and visual quality must be measured on the target tablet before being advertised as supported.
+
 ## Roadmap
 
-- Mode picker for supported resolution, format and frame rate.
-- Better performance diagnostics (input/output FPS, frame timing and dropped-frame estimates where measurable).
-- USB Audio Class capture, volume control and audio/video synchronization, after confirming the capture card's audio interface.
-- Frame interpolation and super-resolution as optional, separately benchmarked processing stages. They are not yet implemented.
+- First: low-latency UVC pipeline, accurate timing and performance diagnostics.
+- Next: frame interpolation proof-of-concept, then optional real-time integration.
+- Then: super-resolution proof-of-concept and optional real-time integration.
+- Later: tune the combined processing pipeline and expose user-selectable quality/latency settings.
+- Last: USB Audio Class capture, playback, volume control and A/V synchronization, after confirming the capture card's audio interface.
 
 ## Build locally
 
