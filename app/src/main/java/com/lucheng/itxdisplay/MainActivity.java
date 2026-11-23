@@ -64,7 +64,9 @@ public class MainActivity extends Activity {
     private int renderedFrames = 0;
     private float displayedFps = 0f;
     private boolean receiverRegistered = false;
-    private boolean opening = false;
+    private volatile boolean opening = false;
+    private volatile boolean previewRunning = false;
+    private FrameLayout previewContainer;
     private volatile boolean activityResumed = false;
     private volatile int sessionGeneration = 0;
     private UsbDevice selectedDevice;
@@ -137,9 +139,11 @@ public class MainActivity extends Activity {
 
     private void buildUi() {
         FrameLayout root = new FrameLayout(this);
+        previewContainer = root;
         root.setBackgroundColor(0xFF000000);
 
         previewView = new TextureView(this);
+        previewView.setBackgroundColor(0xFF000000);
         root.addView(previewView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -147,6 +151,7 @@ public class MainActivity extends Activity {
         previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                surface.setDefaultBufferSize(videoWidth, videoHeight);
                 applyAspectRatio();
                 openCameraIfReady();
             }
@@ -243,6 +248,8 @@ public class MainActivity extends Activity {
         infoParams.setMargins(dp(14), dp(14), dp(14), dp(14));
         root.addView(infoToggle, infoParams);
 
+        root.addOnLayoutChangeListener((view, left, top, right, bottom,
+                                        oldLeft, oldTop, oldRight, oldBottom) -> applyAspectRatio());
         setContentView(root);
     }
 
@@ -301,6 +308,14 @@ public class MainActivity extends Activity {
         }
 
         if (usbManager.hasPermission(device)) {
+            if (previewRunning) {
+                showStatus("UVC 预览正在运行；设备已重新扫描，无需重复打开。");
+                return;
+            }
+            if (opening) {
+                showStatus("UVC 设备正在打开，请稍候…");
+                return;
+            }
             showStatus("USB 已授权，正在连接 UVC 视频流…");
             openCameraIfReady();
         } else {
@@ -339,10 +354,15 @@ public class MainActivity extends Activity {
                 || !previewView.isAvailable() || opening) {
             return;
         }
+        if (previewRunning) {
+            showStatus("UVC 预览已经运行，无需重复打开设备。");
+            return;
+        }
         if (!usbManager.hasPermission(selectedDevice)) return;
 
         SurfaceTexture surfaceTexture = previewView.getSurfaceTexture();
         if (surfaceTexture == null) return;
+        surfaceTexture.setDefaultBufferSize(TARGET_WIDTH, TARGET_HEIGHT);
 
         final int token = sessionGeneration;
         final UsbDevice device = selectedDevice;
@@ -375,6 +395,7 @@ public class MainActivity extends Activity {
                 // Request 1080p50 and prefer MJPEG. The returned mode is the actual negotiated mode.
                 StreamMode actual = newCamera.start(
                         surface, TARGET_WIDTH, TARGET_HEIGHT, TARGET_FPS, StreamFormat.MJPEG);
+                surfaceTexture.setDefaultBufferSize(actual.getWidth(), actual.getHeight());
 
                 if (token != sessionGeneration || !activityResumed || !surface.isValid()) {
                     closeLocalResources(newCamera, newConnection, surface);
@@ -384,6 +405,7 @@ public class MainActivity extends Activity {
                 camera = newCamera;
                 usbConnection = newConnection;
                 streamSurface = surface;
+                previewRunning = true;
 
                 videoWidth = actual.getWidth();
                 videoHeight = actual.getHeight();
@@ -403,6 +425,7 @@ public class MainActivity extends Activity {
                     }
                 });
             } catch (Exception e) {
+                previewRunning = false;
                 closeLocalResources(newCamera, newConnection, surface);
                 final String error = e.getMessage() == null
                         ? e.getClass().getSimpleName() : e.getMessage();
@@ -419,13 +442,39 @@ public class MainActivity extends Activity {
     }
 
     private void applyAspectRatio() {
-        if (previewView == null || previewView.getWidth() <= 0 || previewView.getHeight() <= 0
+        if (previewContainer == null || previewView == null
                 || videoWidth <= 0 || videoHeight <= 0) return;
-        RectF source = new RectF(0, 0, videoWidth, videoHeight);
-        RectF destination = new RectF(0, 0, previewView.getWidth(), previewView.getHeight());
-        Matrix transform = new Matrix();
-        transform.setRectToRect(source, destination, Matrix.ScaleToFit.CENTER);
-        previewView.setTransform(transform);
+
+        int containerWidth = previewContainer.getWidth();
+        int containerHeight = previewContainer.getHeight();
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+
+        // Size the TextureView itself to the stream's aspect ratio. This keeps the
+        // whole frame visible and lets the root's black background form the letterbox.
+        double videoRatio = (double) videoWidth / (double) videoHeight;
+        double containerRatio = (double) containerWidth / (double) containerHeight;
+        int fittedWidth;
+        int fittedHeight;
+        if (containerRatio > videoRatio) {
+            fittedHeight = containerHeight;
+            fittedWidth = Math.max(1, (int) Math.round(fittedHeight * videoRatio));
+        } else {
+            fittedWidth = containerWidth;
+            fittedHeight = Math.max(1, (int) Math.round(fittedWidth / videoRatio));
+        }
+
+        ViewGroup.LayoutParams current = previewView.getLayoutParams();
+        if (!(current instanceof FrameLayout.LayoutParams)) return;
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) current;
+        if (params.width != fittedWidth || params.height != fittedHeight
+                || params.gravity != Gravity.CENTER) {
+            params.width = fittedWidth;
+            params.height = fittedHeight;
+            params.gravity = Gravity.CENTER;
+            previewView.setLayoutParams(params);
+        }
+        // The view bounds now have the same aspect ratio as the video; no crop or stretch matrix.
+        previewView.setTransform(new Matrix());
     }
 
     private void updateDisplayFps() {
@@ -466,6 +515,7 @@ public class MainActivity extends Activity {
     private void invalidateAndCloseSession() {
         sessionGeneration++;
         opening = false;
+        previewRunning = false;
         fpsWindowStart = 0L;
         renderedFrames = 0;
         displayedFps = 0f;
@@ -473,6 +523,7 @@ public class MainActivity extends Activity {
     }
 
     private void closeCameraResources() {
+        previewRunning = false;
         UvcCamera oldCamera = camera;
         UsbDeviceConnection oldConnection = usbConnection;
         Surface oldSurface = streamSurface;
