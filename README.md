@@ -150,3 +150,22 @@ droiduvc is Apache-2.0, and its bundled native dependencies have their own licen
 - Extended the read-only UVC control report to include each supported control's current value, minimum, maximum, step and device-reported default when available.
 - Current value and range are queried independently; a device that supports GET_CUR but does not answer a range request still retains its current-value result.
 - The app continues to perform diagnostics only. It does not write or reset UVC controls.
+
+
+### Measured Hagibis UVC color-control baseline (user device)
+
+Device: MACROSILICON / Hagibis, VID:PID 345F:2130, UVC 1.00. Active input mode: 1920×1080 MJPEG at 50 FPS; the device reports 84 advertised modes.
+
+Read-only UVC control query returned:
+
+| Control | Supported | Current | Range | Step | Device default |
+|---|---:|---:|---:|---:|---:|
+| Brightness | Yes | 50 | 0–100 | 1 | 50 |
+| Contrast | Yes | 50 | 0–100 | 1 | 50 |
+| Saturation | Yes | 50 | 0–100 | 1 | 50 |
+| Hue | Yes | 50 | 0–100 | 1 | 50 |
+| Gamma | Not declared | — | — | — | — |
+| Gain | Not declared | — | — | — | — |
+| Backlight compensation | Not declared | — | — | — | — |
+
+Interpretation: all four readable controls are currently at the device-reported default. This gives no evidence that ITX Display changed these controls away from their defaults. It does not prove that 50 is a perceptually neutral value, nor does it identify the root cause of the RGB-only highlight issue. Keep the current YCbCr output as the verified workaround while investigating raw UVC payload values. No automatic control writes or resets should be made.
