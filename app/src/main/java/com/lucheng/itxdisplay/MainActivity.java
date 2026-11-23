@@ -8,30 +8,61 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.graphics.SurfaceTexture;
 import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.mikimn.droiduvc.StreamFormat;
+import com.mikimn.droiduvc.StreamMode;
+import com.mikimn.droiduvc.UvcCamera;
+
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private static final String ACTION_USB_PERMISSION =
             "com.lucheng.itxdisplay.USB_PERMISSION";
+    private static final int TARGET_WIDTH = 1920;
+    private static final int TARGET_HEIGHT = 1080;
+    private static final int TARGET_FPS = 50;
+
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final ExecutorService cameraExecutor = Executors.newSingleThreadExecutor();
 
     private UsbManager usbManager;
+    private TextureView previewView;
     private TextView statusView;
     private TextView deviceView;
-    private Button scanButton;
-    private UsbDevice selectedDevice;
+    private TextView modeView;
     private boolean receiverRegistered = false;
+    private boolean opening = false;
+    private volatile boolean activityResumed = false;
+    private volatile int sessionGeneration = 0;
+    private UsbDevice selectedDevice;
+
+    // These three session resources are only read or changed on cameraExecutor.
+    private UvcCamera camera;
+    private UsbDeviceConnection usbConnection;
+    private Surface streamSurface;
 
     private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
         @Override
@@ -43,10 +74,10 @@ public class MainActivity extends Activity {
                         UsbManager.EXTRA_PERMISSION_GRANTED, false);
                 if (granted && device != null) {
                     selectedDevice = device;
-                    statusView.setText("USB 已授权：" + device.getDeviceName()
-                            + "\n下一步：打开 UVC 视频流");
+                    showStatus("USB 已授权，正在准备 UVC 预览…");
+                    openCameraIfReady();
                 } else {
-                    statusView.setText("USB 授权未通过，请重新连接并允许访问。");
+                    showStatus("USB 授权未通过。请重新扫描并允许访问采集卡。");
                 }
             } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)
                     || UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
@@ -67,13 +98,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+        applyImmersiveMode();
 
         usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
         buildUi();
@@ -83,48 +108,103 @@ public class MainActivity extends Activity {
                 && checkSelfPermission(Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.CAMERA}, 100);
-        } else {
-            scanDevices();
         }
     }
 
+    private void applyImmersiveMode() {
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+    }
+
+    private int dp(float value) {
+        return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
     private void buildUi() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(28, 22, 28, 22);
-        root.setBackgroundColor(0xFF101318);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(0xFF000000);
+
+        previewView = new TextureView(this);
+        root.addView(previewView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                openCameraIfReady();
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+                // The UVC stream keeps its negotiated resolution; TextureView scales it to the screen.
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                invalidateAndCloseSession();
+                return true;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+                // No per-frame work on the UI thread.
+            }
+        });
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(14), dp(10), dp(14), dp(10));
+        panel.setBackgroundColor(0xB5101318);
 
         TextView title = new TextView(this);
         title.setText("ITX Display  ·  USB 视频输入");
         title.setTextColor(0xFFFFFFFF);
-        title.setTextSize(22);
-        root.addView(title);
+        title.setTextSize(19);
+        panel.addView(title);
 
         statusView = new TextView(this);
         statusView.setText("正在检查 USB 摄像设备…");
-        statusView.setTextColor(0xFFB8C5D6);
-        statusView.setTextSize(15);
-        statusView.setPadding(0, 18, 0, 12);
-        root.addView(statusView);
+        statusView.setTextColor(0xFFD7E0ED);
+        statusView.setTextSize(14);
+        statusView.setPadding(0, dp(7), 0, dp(5));
+        panel.addView(statusView);
 
         deviceView = new TextView(this);
         deviceView.setTextColor(0xFFFFFFFF);
-        deviceView.setTextSize(14);
-        deviceView.setPadding(0, 8, 0, 18);
-        root.addView(deviceView);
+        deviceView.setTextSize(13);
+        deviceView.setPadding(0, dp(4), 0, dp(4));
+        panel.addView(deviceView);
 
-        scanButton = new Button(this);
+        modeView = new TextView(this);
+        modeView.setTextColor(0xFF9FB2C9);
+        modeView.setTextSize(12);
+        modeView.setPadding(0, dp(4), 0, dp(8));
+        panel.addView(modeView);
+
+        Button scanButton = new Button(this);
         scanButton.setText("重新扫描 USB 设备");
         scanButton.setOnClickListener(v -> scanDevices());
-        root.addView(scanButton);
+        panel.addView(scanButton);
 
-        TextView footer = new TextView(this);
-        footer.setText("目标：1920×1080 · 50 FPS · MJPEG 优先 · 无音频");
-        footer.setTextColor(0xFF7F8B9B);
-        footer.setTextSize(12);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.setPadding(0, 20, 0, 0);
-        root.addView(footer);
+        TextView target = new TextView(this);
+        target.setText("目标：1920×1080 · 50 FPS · MJPEG 优先 · 无音频");
+        target.setTextColor(0xFF9AA8BA);
+        target.setTextSize(11);
+        target.setPadding(0, dp(5), 0, 0);
+        panel.addView(target);
+
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.START);
+        panelParams.setMargins(dp(14), dp(14), dp(14), dp(14));
+        root.addView(panel, panelParams);
 
         setContentView(root);
     }
@@ -152,22 +232,33 @@ public class MainActivity extends Activity {
 
         if (candidates.isEmpty()) {
             selectedDevice = null;
-            deviceView.setText("未发现 UVC 视频设备。\n请检查 OTG 转接头、采集卡供电和 USB 连接。");
-            statusView.setText("等待 USB 视频设备连接");
+            invalidateAndCloseSession();
+            if (deviceView != null) {
+                deviceView.setText("未发现 UVC 视频设备。\n请检查 OTG 转接头、采集卡供电和 USB 连接。");
+            }
+            if (modeView != null) modeView.setText("");
+            showStatus("等待 USB 视频设备连接");
             return;
         }
 
         UsbDevice device = candidates.get(0);
+        if (selectedDevice != null && !selectedDevice.equals(device)) {
+            invalidateAndCloseSession();
+        }
         selectedDevice = device;
-        deviceView.setText("设备：" + safeName(device) + "\n"
-                + "VID:PID  " + hex(device.getVendorId()) + ":" + hex(device.getProductId())
-                + "\n接口数：" + device.getInterfaceCount()
-                + "\n检测到 " + candidates.size() + " 个 USB 视频设备");
+
+        if (deviceView != null) {
+            deviceView.setText("设备：" + safeName(device) + "\n"
+                    + "VID:PID  " + hex(device.getVendorId()) + ":" + hex(device.getProductId())
+                    + "    接口数：" + device.getInterfaceCount()
+                    + "\n检测到 " + candidates.size() + " 个 USB 视频设备");
+        }
 
         if (usbManager.hasPermission(device)) {
-            statusView.setText("USB 已授权。UVC 视频流接入将在下一构建步骤启用。");
+            showStatus("USB 已授权，正在连接 UVC 视频流…");
+            openCameraIfReady();
         } else {
-            statusView.setText("发现视频设备，正在请求 USB 访问权限…");
+            showStatus("发现视频设备，正在请求 USB 访问权限…");
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
             PendingIntent permissionIntent = PendingIntent.getBroadcast(
@@ -190,13 +281,166 @@ public class MainActivity extends Activity {
     }
 
     private String hex(int value) {
-        return String.format(java.util.Locale.US, "%04X", value);
+        return String.format(Locale.US, "%04X", value);
+    }
+
+    private void showStatus(String message) {
+        if (statusView != null) statusView.setText(message);
+    }
+
+    private void openCameraIfReady() {
+        if (!activityResumed || selectedDevice == null || previewView == null
+                || !previewView.isAvailable() || opening) {
+            return;
+        }
+        if (!usbManager.hasPermission(selectedDevice)) return;
+
+        SurfaceTexture surfaceTexture = previewView.getSurfaceTexture();
+        if (surfaceTexture == null) return;
+
+        final int token = sessionGeneration;
+        final UsbDevice device = selectedDevice;
+        final Surface surface = new Surface(surfaceTexture);
+        opening = true;
+        showStatus("已获得 USB 权限，正在读取采集卡支持的 UVC 模式…");
+        if (modeView != null) modeView.setText("");
+
+        cameraExecutor.execute(() -> {
+            UsbDeviceConnection newConnection = null;
+            UvcCamera newCamera = null;
+            try {
+                if (token != sessionGeneration || !activityResumed) {
+                    surface.release();
+                    return;
+                }
+
+                newConnection = usbManager.openDevice(device);
+                if (newConnection == null) {
+                    throw new IOException("Android 无法打开 USB 设备。请拔插采集卡后重试。");
+                }
+
+                // droiduvc accepts the file descriptor from the still-open USB connection.
+                newCamera = UvcCamera.Companion.open(newConnection.getFileDescriptor());
+                List<StreamMode> modes = newCamera.supportedModes();
+                if (modes == null || modes.isEmpty()) {
+                    throw new IOException("设备没有报告可显示的 MJPEG/YUYV 视频模式。");
+                }
+
+                // Request 1080p50 and prefer MJPEG. The returned mode is the actual negotiated mode.
+                StreamMode actual = newCamera.start(
+                        surface, TARGET_WIDTH, TARGET_HEIGHT, TARGET_FPS, StreamFormat.MJPEG);
+
+                if (token != sessionGeneration || !activityResumed || !surface.isValid()) {
+                    closeLocalResources(newCamera, newConnection, surface);
+                    return;
+                }
+
+                camera = newCamera;
+                usbConnection = newConnection;
+                streamSurface = surface;
+
+                final String modeText = describeMode(actual);
+                final String supportedText = summarizeModes(modes);
+                final String cameraStatus = "实时预览已启动";
+                mainHandler.post(() -> {
+                    if (token != sessionGeneration) return;
+                    opening = false;
+                    showStatus(cameraStatus + "（实际协商结果）");
+                    if (modeView != null) {
+                        modeView.setText("当前：" + modeText + "\n设备支持：" + supportedText);
+                    }
+                });
+            } catch (Exception e) {
+                closeLocalResources(newCamera, newConnection, surface);
+                final String error = e.getMessage() == null
+                        ? e.getClass().getSimpleName() : e.getMessage();
+                mainHandler.post(() -> {
+                    if (token != sessionGeneration) return;
+                    opening = false;
+                    showStatus("UVC 启动失败：" + error);
+                    if (modeView != null) {
+                        modeView.setText("请确认采集卡仍连接，并尝试重新扫描。");
+                    }
+                });
+            }
+        });
+    }
+
+    private String describeMode(StreamMode mode) {
+        return mode.getWidth() + "×" + mode.getHeight() + " · "
+                + mode.getFormat().name() + " · " + mode.getFps() + " FPS";
+    }
+
+    private String summarizeModes(List<StreamMode> modes) {
+        StringBuilder result = new StringBuilder();
+        int limit = Math.min(modes.size(), 8);
+        for (int i = 0; i < limit; i++) {
+            if (i > 0) result.append("  |  ");
+            result.append(describeMode(modes.get(i)));
+        }
+        if (modes.size() > limit) result.append("  |  …共 ").append(modes.size()).append(" 种");
+        return result.toString();
+    }
+
+    private void invalidateAndCloseSession() {
+        sessionGeneration++;
+        opening = false;
+        cameraExecutor.execute(this::closeCameraResources);
+    }
+
+    private void closeCameraResources() {
+        UvcCamera oldCamera = camera;
+        UsbDeviceConnection oldConnection = usbConnection;
+        Surface oldSurface = streamSurface;
+        camera = null;
+        usbConnection = null;
+        streamSurface = null;
+        closeLocalResources(oldCamera, oldConnection, oldSurface);
+    }
+
+    private void closeLocalResources(UvcCamera oldCamera,
+                                     UsbDeviceConnection oldConnection,
+                                     Surface oldSurface) {
+        if (oldCamera != null) {
+            try {
+                oldCamera.stop();
+            } catch (Exception ignored) {
+            }
+            try {
+                oldCamera.close();
+            } catch (Exception ignored) {
+            }
+        }
+        if (oldSurface != null) {
+            try {
+                oldSurface.release();
+            } catch (Exception ignored) {
+            }
+        }
+        if (oldConnection != null) {
+            try {
+                oldConnection.close();
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (usbManager != null) scanDevices();
+        activityResumed = true;
+        applyImmersiveMode();
+        if (Build.VERSION.SDK_INT < 23
+                || checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            scanDevices();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        activityResumed = false;
+        invalidateAndCloseSession();
+        super.onPause();
     }
 
     @Override
@@ -205,8 +449,8 @@ public class MainActivity extends Activity {
             unregisterReceiver(usbReceiver);
             receiverRegistered = false;
         }
-        // The UVC camera, stream surface and UsbDeviceConnection will be closed here
-        // when the streaming controller is added.
+        invalidateAndCloseSession();
+        cameraExecutor.shutdown();
         super.onDestroy();
     }
 
@@ -214,6 +458,13 @@ public class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
                                            int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 100) scanDevices();
+        if (requestCode == 100) {
+            if (grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                scanDevices();
+            } else {
+                showStatus("需要允许相机权限，Android 才能通过 USB 打开 UVC 采集卡。");
+            }
+        }
     }
 }
