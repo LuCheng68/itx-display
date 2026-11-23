@@ -1,18 +1,18 @@
-# ITX Display v0.2.0
+# ITX Display v0.4.0
 
 Android USB UVC capture display for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.2.0 (versionCode 2)
+- Application version: 0.4.0 (versionCode 4)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - minSdk: 24
 - JDK: 17
 - UVC engine dependency: `io.github.mikimn:droiduvc:0.2.1`
 - Preferred input: MJPEG
-- Requested mode: 1920x1080 at 50 FPS; actual negotiated mode is reported in-app
-- Audio: not used
+- Requested mode: 1920x1080 at 50 FPS; actual negotiated mode is reported in the information panel
+- Audio: not yet implemented
 - Orientation: landscape; screen stays awake and immersive
 
 ## Implemented
@@ -24,12 +24,26 @@ Android USB UVC capture display for Xiaomi Pad 5 Pro (Android 15).
 - Read the renderable MJPEG/YUYV modes advertised by the capture device.
 - Request 1920x1080 at 50 FPS with MJPEG preferred, then show the actual negotiated mode.
 - Render the UVC stream into a TextureView.
+- Keep the full video frame visible using centered aspect-ratio fitting; unused space remains black (no stretch, no crop).
+- Keep device details and performance information hidden by default; use the top-right “显示信息” button to reveal or hide the information panel.
+- Show the negotiated input mode and a TextureView update-rate estimate in the information overlay.
 - Stop and release the UVC camera, Surface and USB connection as the app is paused or the surface is destroyed.
 - Rescan when USB devices attach or detach.
 
+## Performance metric note
+
+The displayed FPS is counted from TextureView frame-update callbacks. It is a useful display update-rate estimate, not a hardware-level measurement of USB transport FPS or a guarantee that every input frame reached the display.
+
 ## Hardware validation still required
 
-The source now contains the live UVC preview path, but it has not yet been confirmed by a successful cloud build and an on-device test. The MS2130/Hagibis capture card must be tested on the tablet to verify the actual mode list, negotiated resolution/frame rate, sustained frame rate, and stability. A requested 1080p50 mode does not guarantee the capture card exposes or can sustain that mode.
+The live UVC path has been exercised on the target setup, but the current source update still needs a fresh cloud build and installation test. The MS2130/Hagibis capture card must be checked for actual supported modes, negotiated resolution/frame rate, sustained frame rate and stability. A requested 1080p50 mode does not guarantee the capture card exposes or can sustain that mode.
+
+## Roadmap
+
+- Mode picker for supported resolution, format and frame rate.
+- Better performance diagnostics (input/output FPS, frame timing and dropped-frame estimates where measurable).
+- USB Audio Class capture, volume control and audio/video synchronization, after confirming the capture card's audio interface.
+- Frame interpolation and super-resolution as optional, separately benchmarked processing stages. They are not yet implemented.
 
 ## Build locally
 
@@ -49,7 +63,7 @@ The repository root contains `codemagic.yaml`. It is configured for a macOS M2 i
 
 ## USB permissions
 
-Android requires the CAMERA runtime permission and per-device USB permission for UVC access. The app does not request microphone permission and does not capture audio.
+Android requires the CAMERA runtime permission and per-device USB permission for UVC access. The app does not request microphone permission.
 
 ## License notes
 
