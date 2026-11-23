@@ -1,6 +1,6 @@
 # ITX Display — Roadmap & Technical Overview
 
-> 文档版本：1.8  
+> 文档版本：1.9  
 > 更新日期：2026-11-24  
 > 项目代号：ITX Display
 
@@ -285,6 +285,10 @@ USB 视频采集卡（MS2130 / Hagibis）
 **验收重点：** UVC 预览稳定，能够重复测量输入 FPS、显示 FPS 与延迟；不能只显示目标值。
 
 ### v0.5.0 — 低延迟视频处理管线
+
+**当前开发分支的首批实现：** 将 droiduvc v0.2.1 作为本地可修改模块构建，CMake 在构建时按固定 commit 下载 libjpeg-turbo、libusb 和 libuvc；增加 JNI 原始 UVC 帧回调，在 `uvc_any2rgb()` 之前观察 MJPEG/YUYV 负载；应用侧以三缓冲池和两帧有界队列复制/分析，队列满时丢弃旧分析帧；后台解析 MJPEG SOF 头部并报告 4:2:0 / 4:2:2 / 4:4:4 采样因子（如存在）、帧大小、回调 FPS、分析 FPS 与丢帧。原有 Surface 预览仍保持不变。
+
+**尚未实现：** 原始 MJPEG 的独立解码显示、RGB Full/Limited 校正、GPU Shader 色彩转换、帧插值和超分辨率。上述仍需实机验证与后续开发。
 
 **目标：** 为插帧和超分辨率提供统一、可控的帧处理路径。
 

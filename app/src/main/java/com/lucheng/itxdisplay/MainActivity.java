@@ -71,6 +71,7 @@ public class MainActivity extends Activity {
     private volatile String baseDiagnosticsReport = "尚未连接 UVC 设备。";
     private volatile String diagnosticsReport = "尚未连接 UVC 设备。";
     private volatile boolean readingColorControls = false;
+    private volatile RawUvcFramePipeline rawFramePipeline;
     private boolean videoInfoVisible = false;
     private int videoWidth = TARGET_WIDTH;
     private int videoHeight = TARGET_HEIGHT;
@@ -445,6 +446,7 @@ public class MainActivity extends Activity {
         cameraExecutor.execute(() -> {
             UsbDeviceConnection newConnection = null;
             UvcCamera newCamera = null;
+            RawUvcFramePipeline newRawPipeline = null;
             try {
                 if (token != sessionGeneration || !activityResumed) {
                     surface.release();
@@ -463,18 +465,25 @@ public class MainActivity extends Activity {
                     throw new IOException("设备没有报告可显示的 MJPEG/YUYV 视频模式。");
                 }
 
+                // Receive the original UVC payload before droiduvc converts it for Surface preview.
+                // The observer only copies into a bounded queue; parsing runs on its own worker.
+                newRawPipeline = new RawUvcFramePipeline();
+                newCamera.setRawFrameListener(newRawPipeline);
+
                 // Request 1080p50 and prefer MJPEG. The returned mode is the actual negotiated mode.
                 StreamMode actual = newCamera.start(
                         surface, TARGET_WIDTH, TARGET_HEIGHT, TARGET_FPS, StreamFormat.MJPEG);
 
                 if (token != sessionGeneration || !activityResumed || !surface.isValid()) {
-                    closeLocalResources(newCamera, newConnection, surface);
+                    closeLocalResources(newCamera, newConnection, surface, newRawPipeline);
                     return;
                 }
 
                 camera = newCamera;
                 usbConnection = newConnection;
                 streamSurface = surface;
+                final RawUvcFramePipeline activeRawPipeline = newRawPipeline;
+                rawFramePipeline = activeRawPipeline;
                 previewRunning = true;
 
                 videoWidth = actual.getWidth();
@@ -496,12 +505,12 @@ public class MainActivity extends Activity {
                     if (statsView != null) {
                         statsView.setText("输入：" + actual.getFps() + " FPS（协商值）\n显示：" + formatFps(displayedFps));
                     }
-                    if (diagnosticsView != null) diagnosticsView.setText(cameraDiagnostics);
+                    if (diagnosticsView != null) diagnosticsView.setText(cameraDiagnostics + "\\n\\n" + activeRawPipeline.getSummary());
                     if (colorReadButton != null) colorReadButton.setEnabled(true);
                 });
             } catch (Exception e) {
                 previewRunning = false;
-                closeLocalResources(newCamera, newConnection, surface);
+                closeLocalResources(newCamera, newConnection, surface, newRawPipeline);
                 final String error = e.getMessage() == null
                         ? e.getClass().getSimpleName() : e.getMessage();
                 mainHandler.post(() -> {
@@ -685,7 +694,10 @@ public class MainActivity extends Activity {
             showStatus("无法访问系统剪贴板。");
             return;
         }
-        clipboard.setPrimaryClip(ClipData.newPlainText("ITX Display UVC diagnostics", diagnosticsReport));
+        RawUvcFramePipeline pipeline = rawFramePipeline;
+        String rawSummary = pipeline == null ? "UVC 原始帧：--" : pipeline.getDetailedReport();
+        String report = diagnosticsReport + "\\n\\n" + rawSummary;
+        clipboard.setPrimaryClip(ClipData.newPlainText("ITX Display UVC diagnostics", report));
         showStatus("UVC 诊断报告已复制。");
     }
 
@@ -762,8 +774,13 @@ public class MainActivity extends Activity {
             displayedFps = renderedFrames * 1000f / elapsed;
             renderedFrames = 0;
             fpsWindowStart = now;
+            RawUvcFramePipeline pipeline = rawFramePipeline;
+            String rawSummary = pipeline == null ? "UVC 原始帧：--" : pipeline.getSummary();
             if (statsView != null) {
-                statsView.setText("显示：" + formatFps(displayedFps) + " FPS");
+                statsView.setText("显示：" + formatFps(displayedFps) + " FPS\\n" + rawSummary);
+            }
+            if (diagnosticsView != null && previewRunning) {
+                diagnosticsView.setText(baseDiagnosticsReport + "\\n\\n" + rawSummary);
             }
         }
     }
@@ -813,22 +830,35 @@ public class MainActivity extends Activity {
         UvcCamera oldCamera = camera;
         UsbDeviceConnection oldConnection = usbConnection;
         Surface oldSurface = streamSurface;
+        RawUvcFramePipeline oldRawPipeline = rawFramePipeline;
         camera = null;
         usbConnection = null;
         streamSurface = null;
-        closeLocalResources(oldCamera, oldConnection, oldSurface);
+        rawFramePipeline = null;
+        closeLocalResources(oldCamera, oldConnection, oldSurface, oldRawPipeline);
     }
 
     private void closeLocalResources(UvcCamera oldCamera,
                                      UsbDeviceConnection oldConnection,
-                                     Surface oldSurface) {
+                                     Surface oldSurface,
+                                     RawUvcFramePipeline oldRawPipeline) {
         if (oldCamera != null) {
+            try {
+                oldCamera.setRawFrameListener(null);
+            } catch (Exception ignored) {
+            }
             try {
                 oldCamera.stop();
             } catch (Exception ignored) {
             }
             try {
                 oldCamera.close();
+            } catch (Exception ignored) {
+            }
+        }
+        if (oldRawPipeline != null) {
+            try {
+                oldRawPipeline.close();
             } catch (Exception ignored) {
             }
         }

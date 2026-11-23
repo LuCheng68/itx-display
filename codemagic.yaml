@@ -9,11 +9,14 @@ workflows:
       branch_patterns:
         - pattern: main
           include: true
+        - pattern: feature/raw-uvc-frame-pipeline
+          include: true
       cancel_previous_builds: true
     when:
       changeset:
         includes:
           - 'app/**'
+          - 'libraries/**'
           - 'build.gradle'
           - 'settings.gradle'
           - 'gradle.properties'
@@ -26,6 +29,13 @@ workflows:
           echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
           curl -L --fail --retry 3 https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle-8.9-bin.zip
           unzip -q /tmp/gradle-8.9-bin.zip -d /tmp
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "Android sdkmanager not found at $SDKMANAGER"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "ndk;30.0.16248370" "cmake;3.22.1"
       - name: Build debug APK
         script: |
           /tmp/gradle-8.9/bin/gradle --no-daemon assembleDebug

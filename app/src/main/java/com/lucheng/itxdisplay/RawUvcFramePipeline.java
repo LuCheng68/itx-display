@@ -1,0 +1,289 @@
+package com.lucheng.itxdisplay;
+
+import com.mikimn.droiduvc.RawFrameListener;
+
+import java.nio.ByteBuffer;
+import java.util.Locale;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * Low-latency raw UVC payload tap.
+ *
+ * The native callback only copies the borrowed payload into a three-buffer pool and enqueues it.
+ * The worker parses the JPEG header (when the payload is MJPEG) and updates diagnostics. The
+ * display path remains the existing native Surface path; this queue is deliberately bounded and
+ * drops the oldest queued frame rather than accumulating latency.
+ */
+public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseable {
+    private static final int POOL_SIZE = 3;
+    private static final int QUEUE_CAPACITY = 2;
+    private static final int MAX_FRAME_BYTES = 32 * 1024 * 1024;
+
+    private static final class FrameSlot {
+        byte[] bytes = new byte[0];
+        int size;
+        int width;
+        int height;
+        int formatCode;
+        long sequence;
+        long captureTimeNs;
+        long callbackTimeNs;
+    }
+
+    private final ArrayBlockingQueue<FrameSlot> freeSlots = new ArrayBlockingQueue<>(POOL_SIZE);
+    private final ArrayBlockingQueue<FrameSlot> readySlots = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
+    private final AtomicBoolean running = new AtomicBoolean(true);
+    private final AtomicLong callbackCount = new AtomicLong();
+    private final AtomicLong droppedCount = new AtomicLong();
+    private final AtomicLong analyzedCount = new AtomicLong();
+    private final AtomicLong sequenceGapCount = new AtomicLong();
+    private final Thread worker;
+
+    private volatile String jpegDescription = "等待 UVC 原始帧";
+    private volatile int latestFrameBytes;
+    private volatile double averageFrameBytes;
+    private volatile double callbackFps;
+    private volatile double analysisFps;
+    private long previousCallbackNs;
+    private volatile long latestSequence = -1;
+    private volatile int latestFormatCode = -1;
+
+    public RawUvcFramePipeline() {
+        for (int i = 0; i < POOL_SIZE; i++) {
+            freeSlots.offer(new FrameSlot());
+        }
+        worker = new Thread(this::runWorker, "ITX-RawUVC-Analyzer");
+        worker.setPriority(Thread.NORM_PRIORITY - 1);
+        worker.start();
+    }
+
+    /**
+     * Called on the native UVC streaming thread. The direct ByteBuffer is borrowed and becomes
+     * invalid after this method returns, so copy immediately and do no JPEG decoding here.
+     */
+    @Override
+    public void onFrame(ByteBuffer data,
+                        int width,
+                        int height,
+                        int formatCode,
+                        long sequence,
+                        long captureTimeNs) {
+        if (!running.get() || data == null) return;
+        callbackCount.incrementAndGet();
+        final long callbackNowNs = System.nanoTime();
+        if (previousCallbackNs != 0 && callbackNowNs > previousCallbackNs) {
+            double instantFps = 1_000_000_000.0 / (callbackNowNs - previousCallbackNs);
+            callbackFps = callbackFps == 0 ? instantFps : callbackFps * 0.8 + instantFps * 0.2;
+        }
+        previousCallbackNs = callbackNowNs;
+        final int size = data.remaining();
+        if (size <= 0 || size > MAX_FRAME_BYTES) {
+            droppedCount.incrementAndGet();
+            return;
+        }
+
+        FrameSlot slot = freeSlots.poll();
+        if (slot == null) {
+            // Keep the newest frames. An unprocessed old frame is less useful than the current one.
+            slot = readySlots.poll();
+            if (slot == null) {
+                droppedCount.incrementAndGet();
+                return;
+            }
+            droppedCount.incrementAndGet();
+        }
+
+        try {
+            if (slot.bytes.length < size) {
+                slot.bytes = new byte[nextCapacity(size)];
+            }
+            ByteBuffer source = data.duplicate();
+            source.get(slot.bytes, 0, size);
+            slot.size = size;
+            slot.width = width;
+            slot.height = height;
+            slot.formatCode = formatCode;
+            slot.sequence = sequence;
+            slot.captureTimeNs = captureTimeNs;
+            slot.callbackTimeNs = callbackNowNs;
+            latestFormatCode = formatCode;
+
+            if (!readySlots.offer(slot)) {
+                droppedCount.incrementAndGet();
+                freeSlots.offer(slot);
+            }
+        } catch (RuntimeException e) {
+            droppedCount.incrementAndGet();
+            freeSlots.offer(slot);
+        }
+    }
+
+    private static int nextCapacity(int required) {
+        int capacity = 1024;
+        while (capacity < required && capacity < MAX_FRAME_BYTES) {
+            capacity <<= 1;
+        }
+        return Math.max(required, Math.min(capacity, MAX_FRAME_BYTES));
+    }
+
+    private void runWorker() {
+        long windowStartNs = System.nanoTime();
+        long previousArrivalNs = 0;
+        long previousSequence = -1;
+        long windowFrames = 0;
+        try {
+            while (running.get() || !readySlots.isEmpty()) {
+                FrameSlot slot = readySlots.poll(250, TimeUnit.MILLISECONDS);
+                if (slot == null) continue;
+
+                try {
+                    analyzedCount.incrementAndGet();
+                    latestFrameBytes = slot.size;
+                    if (averageFrameBytes == 0) averageFrameBytes = slot.size;
+                    else averageFrameBytes = averageFrameBytes * 0.8 + slot.size * 0.2;
+
+                    if (previousSequence >= 0 && slot.sequence > previousSequence + 1) {
+                        sequenceGapCount.addAndGet(slot.sequence - previousSequence - 1);
+                    }
+                    previousSequence = slot.sequence;
+                    latestSequence = slot.sequence;
+
+                    jpegDescription = parseJpegHeader(slot.bytes, slot.size);
+                    if (previousArrivalNs != 0 && slot.callbackTimeNs > previousArrivalNs) {
+                        long interval = slot.callbackTimeNs - previousArrivalNs;
+                        double instantFps = 1_000_000_000.0 / interval;
+                        analysisFps = analysisFps == 0 ? instantFps : analysisFps * 0.8 + instantFps * 0.2;
+                    }
+                    previousArrivalNs = slot.callbackTimeNs;
+
+                    windowFrames++;
+                    long now = System.nanoTime();
+                    long elapsed = now - windowStartNs;
+                    if (elapsed >= 1_000_000_000L) {
+                        if (windowFrames > 0) {
+                            analysisFps = windowFrames * 1_000_000_000.0 / elapsed;
+                        }
+                        windowStartNs = now;
+                        windowFrames = 0;
+                    }
+                } finally {
+                    slot.size = 0;
+                    freeSlots.offer(slot);
+                }
+            }
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    public String getSummary() {
+        return String.format(Locale.US,
+                "UVC回调 %.1f FPS / 分析 %.1f FPS · 最近 %.1f KB · %s · 丢帧 %d",
+                callbackFps,
+                analysisFps,
+                latestFrameBytes / 1024.0,
+                jpegDescription,
+                droppedCount.get());
+    }
+
+    public String getDetailedReport() {
+        return getSummary()
+                + "\n回调帧数：" + callbackCount.get()
+                + "\n分析帧数：" + analyzedCount.get()
+                + "\n序号缺口估计：" + sequenceGapCount.get()
+                + "\n最近序号：" + latestSequence
+                + "\nUVC format code：" + latestFormatCode
+                + "\n平均压缩帧大小：" + String.format(Locale.US, "%.1f KB", averageFrameBytes / 1024.0);
+    }
+
+    private static String parseJpegHeader(byte[] data, int size) {
+        if (size < 4 || (data[0] & 0xFF) != 0xFF || (data[1] & 0xFF) != 0xD8) {
+            return "非 JPEG 负载";
+        }
+
+        boolean jfif = false;
+        boolean adobe = false;
+        int position = 2;
+
+        while (position + 4 <= size) {
+            while (position < size && (data[position] & 0xFF) != 0xFF) position++;
+            if (position >= size) break;
+            while (position < size && (data[position] & 0xFF) == 0xFF) position++;
+            if (position >= size) break;
+
+            int marker = data[position++] & 0xFF;
+            if (marker == 0xD9 || marker == 0xDA) break; // EOI or start of compressed scan
+            if (marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) continue;
+            if (position + 2 > size) break;
+
+            int segmentLength = u16(data, position);
+            if (segmentLength < 2 || position + segmentLength > size) break;
+            int payload = position + 2;
+            int payloadLength = segmentLength - 2;
+
+            if (marker == 0xE0 && payloadLength >= 5 && ascii(data, payload, "JFIF\0")) {
+                jfif = true;
+            } else if (marker == 0xEE && payloadLength >= 5 && ascii(data, payload, "Adobe")) {
+                adobe = true;
+            }
+
+            if (isStartOfFrame(marker) && payloadLength >= 6) {
+                int componentCount = data[payload + 5] & 0xFF;
+                if (componentCount >= 3 && payloadLength >= 6 + componentCount * 3) {
+                    int ySampling = data[payload + 7] & 0xFF;
+                    int cbSampling = data[payload + 10] & 0xFF;
+                    int crSampling = data[payload + 13] & 0xFF;
+                    int yH = (ySampling >> 4) & 0x0F;
+                    int yV = ySampling & 0x0F;
+                    int cbH = (cbSampling >> 4) & 0x0F;
+                    int cbV = cbSampling & 0x0F;
+                    int crH = (crSampling >> 4) & 0x0F;
+                    int crV = crSampling & 0x0F;
+
+                    String sampling;
+                    if (yH == 2 && yV == 2 && cbH == 1 && cbV == 1 && crH == 1 && crV == 1) {
+                        sampling = "JPEG 4:2:0";
+                    } else if (yH == 2 && yV == 1 && cbH == 1 && cbV == 1 && crH == 1 && crV == 1) {
+                        sampling = "JPEG 4:2:2";
+                    } else if (yH == 1 && yV == 1 && cbH == 1 && cbV == 1 && crH == 1 && crV == 1) {
+                        sampling = "JPEG 4:4:4";
+                    } else {
+                        sampling = "JPEG 色度采样 Y=" + yH + "x" + yV
+                                + " Cb=" + cbH + "x" + cbV
+                                + " Cr=" + crH + "x" + crV;
+                    }
+                    return sampling + (jfif ? " / JFIF" : "") + (adobe ? " / Adobe" : "");
+                }
+            }
+            position += segmentLength;
+        }
+        return "MJPEG 头已收到，采样因子未解析" + (jfif ? " / JFIF" : "") + (adobe ? " / Adobe" : "");
+    }
+
+    private static boolean isStartOfFrame(int marker) {
+        return marker >= 0xC0 && marker <= 0xCF
+                && marker != 0xC4 && marker != 0xC8 && marker != 0xCC;
+    }
+
+    private static int u16(byte[] data, int offset) {
+        return ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+    }
+
+    private static boolean ascii(byte[] data, int offset, String value) {
+        if (offset + value.length() > data.length) return false;
+        for (int i = 0; i < value.length(); i++) {
+            if ((data[offset + i] & 0xFF) != (value.charAt(i) & 0xFF)) return false;
+        }
+        return true;
+    }
+
+    @Override
+    public void close() {
+        if (running.compareAndSet(true, false)) {
+            worker.interrupt();
+        }
+    }
+}

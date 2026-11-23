@@ -1,10 +1,10 @@
-# ITX Display v0.4.6
+# ITX Display v0.5.0
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.4.6 (versionCode 10)
+- Application version: 0.5.0 (versionCode 11)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - minSdk: 24
@@ -169,3 +169,12 @@ Read-only UVC control query returned:
 | Backlight compensation | Not declared | — | — | — | — |
 
 Interpretation: all four readable controls are currently at the device-reported default. This gives no evidence that ITX Display changed these controls away from their defaults. It does not prove that 50 is a perceptually neutral value, nor does it identify the root cause of the RGB-only highlight issue. Keep the current YCbCr output as the verified workaround while investigating raw UVC payload values. No automatic control writes or resets should be made.
+
+
+## v0.5.0 raw UVC payload pipeline (development branch)
+
+- Replaced the Maven droiduvc binary dependency with a local, patchable Android library module based on upstream droiduvc v0.2.1. The upstream Apache-2.0 license is retained in the module; its libjpeg-turbo, libusb and libuvc dependencies are fetched by CMake at pinned upstream commits.
+- Added a native JNI raw-frame observer invoked before `uvc_any2rgb()`. The observer receives a borrowed direct ByteBuffer over the libuvc frame and must copy it synchronously before returning.
+- Added an app-side three-slot reusable buffer pool and a two-frame bounded latest-frame queue. When full, the oldest queued analysis frame is discarded instead of building latency.
+- Added a worker-side MJPEG header parser that reports JPEG chroma sampling (4:2:0 / 4:2:2 / 4:4:4 when present), frame size, callback FPS, analysis FPS, sequence gaps and queue drops.
+- The original droiduvc Surface preview remains active in parallel. This is the raw payload acquisition/queue foundation only: it does not yet decode the raw payload for display, perform RGB range correction, or run GPU color conversion/interpolation.
