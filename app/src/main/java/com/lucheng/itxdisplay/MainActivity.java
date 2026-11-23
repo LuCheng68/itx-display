@@ -9,6 +9,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.SurfaceTexture;
+import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
@@ -53,6 +55,12 @@ public class MainActivity extends Activity {
     private TextView statusView;
     private TextView deviceView;
     private TextView modeView;
+    private TextView statsView;
+    private int videoWidth = TARGET_WIDTH;
+    private int videoHeight = TARGET_HEIGHT;
+    private long fpsWindowStart = 0L;
+    private int renderedFrames = 0;
+    private float displayedFps = 0f;
     private boolean receiverRegistered = false;
     private boolean opening = false;
     private volatile boolean activityResumed = false;
@@ -137,12 +145,13 @@ public class MainActivity extends Activity {
         previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                applyAspectRatio();
                 openCameraIfReady();
             }
 
             @Override
             public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
-                // The UVC stream keeps its negotiated resolution; TextureView scales it to the screen.
+                applyAspectRatio();
             }
 
             @Override
@@ -153,7 +162,7 @@ public class MainActivity extends Activity {
 
             @Override
             public void onSurfaceTextureUpdated(SurfaceTexture surface) {
-                // No per-frame work on the UI thread.
+                updateDisplayFps();
             }
         });
 
@@ -191,6 +200,19 @@ public class MainActivity extends Activity {
         scanButton.setText("重新扫描 USB 设备");
         scanButton.setOnClickListener(v -> scanDevices());
         panel.addView(scanButton);
+
+        statsView = new TextView(this);
+        statsView.setText("显示 FPS：--");
+        statsView.setTextColor(0xFFFFFFFF);
+        statsView.setTextSize(13);
+        statsView.setPadding(dp(10), dp(7), dp(10), dp(7));
+        statsView.setBackgroundColor(0xB5101318);
+        FrameLayout.LayoutParams statsParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        statsParams.setMargins(dp(14), dp(14), dp(14), dp(14));
+        root.addView(statsView, statsParams);
 
         TextView target = new TextView(this);
         target.setText("目标：1920×1080 · 50 FPS · MJPEG 优先 · 无音频");
@@ -339,6 +361,9 @@ public class MainActivity extends Activity {
                 usbConnection = newConnection;
                 streamSurface = surface;
 
+                videoWidth = actual.getWidth();
+                videoHeight = actual.getHeight();
+                mainHandler.post(this::applyAspectRatio);
                 final String modeText = describeMode(actual);
                 final String supportedText = summarizeModes(modes);
                 final String cameraStatus = "实时预览已启动";
@@ -348,6 +373,9 @@ public class MainActivity extends Activity {
                     showStatus(cameraStatus + "（实际协商结果）");
                     if (modeView != null) {
                         modeView.setText("当前：" + modeText + "\n设备支持：" + supportedText);
+                    }
+                    if (statsView != null) {
+                        statsView.setText("输入：" + actual.getFps() + " FPS（协商值）\n显示：" + formatFps(displayedFps));
                     }
                 });
             } catch (Exception e) {
@@ -364,6 +392,36 @@ public class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private void applyAspectRatio() {
+        if (previewView == null || previewView.getWidth() <= 0 || previewView.getHeight() <= 0
+                || videoWidth <= 0 || videoHeight <= 0) return;
+        RectF source = new RectF(0, 0, videoWidth, videoHeight);
+        RectF destination = new RectF(0, 0, previewView.getWidth(), previewView.getHeight());
+        Matrix transform = new Matrix();
+        transform.setRectToRect(source, destination, Matrix.ScaleToFit.CENTER);
+        previewView.setTransform(transform);
+    }
+
+    private void updateDisplayFps() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (fpsWindowStart == 0L) fpsWindowStart = now;
+        renderedFrames++;
+        long elapsed = now - fpsWindowStart;
+        if (elapsed >= 1000L) {
+            displayedFps = renderedFrames * 1000f / elapsed;
+            renderedFrames = 0;
+            fpsWindowStart = now;
+            if (statsView != null) {
+                String input = modeView != null ? modeView.getText().toString() : "";
+                statsView.setText("显示：" + formatFps(displayedFps) + " FPS");
+            }
+        }
+    }
+
+    private String formatFps(float fps) {
+        return fps <= 0f ? "--" : String.format(Locale.US, "%.1f", fps);
     }
 
     private String describeMode(StreamMode mode) {
@@ -385,6 +443,9 @@ public class MainActivity extends Activity {
     private void invalidateAndCloseSession() {
         sessionGeneration++;
         opening = false;
+        fpsWindowStart = 0L;
+        renderedFrames = 0;
+        displayedFps = 0f;
         cameraExecutor.execute(this::closeCameraResources);
     }
 
