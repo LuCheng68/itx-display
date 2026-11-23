@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 public class MainActivity extends Activity {
     private static final String ACTION_USB_PERMISSION =
@@ -66,7 +67,7 @@ public class MainActivity extends Activity {
     private boolean receiverRegistered = false;
     private volatile boolean opening = false;
     private volatile boolean previewRunning = false;
-    private FrameLayout previewContainer;
+    private volatile boolean executorShutdown = false;
     private volatile boolean activityResumed = false;
     private volatile int sessionGeneration = 0;
     private UsbDevice selectedDevice;
@@ -139,11 +140,9 @@ public class MainActivity extends Activity {
 
     private void buildUi() {
         FrameLayout root = new FrameLayout(this);
-        previewContainer = root;
         root.setBackgroundColor(0xFF000000);
 
         previewView = new TextureView(this);
-        previewView.setBackgroundColor(0xFF000000);
         root.addView(previewView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -151,7 +150,6 @@ public class MainActivity extends Activity {
         previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override
             public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
-                surface.setDefaultBufferSize(videoWidth, videoHeight);
                 applyAspectRatio();
                 openCameraIfReady();
             }
@@ -248,8 +246,6 @@ public class MainActivity extends Activity {
         infoParams.setMargins(dp(14), dp(14), dp(14), dp(14));
         root.addView(infoToggle, infoParams);
 
-        root.addOnLayoutChangeListener((view, left, top, right, bottom,
-                                        oldLeft, oldTop, oldRight, oldBottom) -> applyAspectRatio());
         setContentView(root);
     }
 
@@ -362,7 +358,6 @@ public class MainActivity extends Activity {
 
         SurfaceTexture surfaceTexture = previewView.getSurfaceTexture();
         if (surfaceTexture == null) return;
-        surfaceTexture.setDefaultBufferSize(TARGET_WIDTH, TARGET_HEIGHT);
 
         final int token = sessionGeneration;
         final UsbDevice device = selectedDevice;
@@ -395,7 +390,6 @@ public class MainActivity extends Activity {
                 // Request 1080p50 and prefer MJPEG. The returned mode is the actual negotiated mode.
                 StreamMode actual = newCamera.start(
                         surface, TARGET_WIDTH, TARGET_HEIGHT, TARGET_FPS, StreamFormat.MJPEG);
-                surfaceTexture.setDefaultBufferSize(actual.getWidth(), actual.getHeight());
 
                 if (token != sessionGeneration || !activityResumed || !surface.isValid()) {
                     closeLocalResources(newCamera, newConnection, surface);
@@ -442,39 +436,13 @@ public class MainActivity extends Activity {
     }
 
     private void applyAspectRatio() {
-        if (previewContainer == null || previewView == null
+        if (previewView == null || previewView.getWidth() <= 0 || previewView.getHeight() <= 0
                 || videoWidth <= 0 || videoHeight <= 0) return;
-
-        int containerWidth = previewContainer.getWidth();
-        int containerHeight = previewContainer.getHeight();
-        if (containerWidth <= 0 || containerHeight <= 0) return;
-
-        // Size the TextureView itself to the stream's aspect ratio. This keeps the
-        // whole frame visible and lets the root's black background form the letterbox.
-        double videoRatio = (double) videoWidth / (double) videoHeight;
-        double containerRatio = (double) containerWidth / (double) containerHeight;
-        int fittedWidth;
-        int fittedHeight;
-        if (containerRatio > videoRatio) {
-            fittedHeight = containerHeight;
-            fittedWidth = Math.max(1, (int) Math.round(fittedHeight * videoRatio));
-        } else {
-            fittedWidth = containerWidth;
-            fittedHeight = Math.max(1, (int) Math.round(fittedWidth / videoRatio));
-        }
-
-        ViewGroup.LayoutParams current = previewView.getLayoutParams();
-        if (!(current instanceof FrameLayout.LayoutParams)) return;
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) current;
-        if (params.width != fittedWidth || params.height != fittedHeight
-                || params.gravity != Gravity.CENTER) {
-            params.width = fittedWidth;
-            params.height = fittedHeight;
-            params.gravity = Gravity.CENTER;
-            previewView.setLayoutParams(params);
-        }
-        // The view bounds now have the same aspect ratio as the video; no crop or stretch matrix.
-        previewView.setTransform(new Matrix());
+        RectF source = new RectF(0, 0, videoWidth, videoHeight);
+        RectF destination = new RectF(0, 0, previewView.getWidth(), previewView.getHeight());
+        Matrix transform = new Matrix();
+        transform.setRectToRect(source, destination, Matrix.ScaleToFit.CENTER);
+        previewView.setTransform(transform);
     }
 
     private void updateDisplayFps() {
@@ -519,7 +487,15 @@ public class MainActivity extends Activity {
         fpsWindowStart = 0L;
         renderedFrames = 0;
         displayedFps = 0f;
-        cameraExecutor.execute(this::closeCameraResources);
+        // Surface callbacks can arrive during Activity teardown. Never submit work
+        // to an executor after shutdown has started.
+        if (!executorShutdown) {
+            try {
+                cameraExecutor.execute(this::closeCameraResources);
+            } catch (RejectedExecutionException ignored) {
+                // The executor may have been shut down concurrently by onDestroy().
+            }
+        }
     }
 
     private void closeCameraResources() {
@@ -585,6 +561,7 @@ public class MainActivity extends Activity {
             receiverRegistered = false;
         }
         invalidateAndCloseSession();
+        executorShutdown = true;
         cameraExecutor.shutdown();
         super.onDestroy();
     }
