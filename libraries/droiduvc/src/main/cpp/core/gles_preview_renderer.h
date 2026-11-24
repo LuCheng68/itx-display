@@ -160,6 +160,10 @@ private:
         GLint ok = GL_FALSE;
         glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
         if (!ok) {
+            GLchar log[2048] = {};
+            glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+            __android_log_print(ANDROID_LOG_ERROR, "UvcGles",
+                                "GLES shader compile failed (type=0x%x): %s", type, log);
             glDeleteShader(shader);
             return 0;
         }
@@ -426,7 +430,6 @@ void main() {
             glViewport(0, 0, width, height);
             glUseProgram(rcasProgram_);
             glActiveTexture(GL_TEXTURE0);
-            glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texture_);
             glUniform1i(glGetUniformLocation(rcasProgram_, "uInputTexture"), 0);
             glActiveTexture(GL_TEXTURE1);
@@ -472,7 +475,6 @@ void main() {
         glViewport((outputWidth - viewportWidth) / 2, (outputHeight - viewportHeight) / 2,
                    viewportWidth, viewportHeight);
         glUseProgram(program_);
-        glActiveTexture(GL_TEXTURE0);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, fsrApplied ? fsrTexture_ : texture_);
         glUniform1i(glGetUniformLocation(program_, "uTexture"), 0);
