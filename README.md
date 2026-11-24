@@ -1,12 +1,13 @@
-# ITX Display v0.5.2
+# ITX Display v0.5.3
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.5.2 (versionCode 13)
+- Application version: 0.5.3 (versionCode 14)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
+- Native ABI: arm64-v8a only (Snapdragon 870 / ARM64 target)
 - minSdk: 24
 - JDK: 17
 - UVC engine dependency: `io.github.mikimn:droiduvc:0.2.1`
@@ -195,3 +196,39 @@ Interpretation: all four readable controls are currently at the device-reported 
 - Added a user-triggered one-frame grayscale chart probe. It decodes only one selected MJPEG frame at half resolution on the background analysis worker and samples ten fixed patch centers (expected values 16, 32, 64, 96, 128, 160, 192, 220, 240, 255). It does not add continuous JPEG decoding to the 50 FPS path.
 - This probe distinguishes whether the USB MJPEG payload still contains separable highlight levels. If the 220/240/255 samples collapse inside the raw MJPEG decode, the clipping happened before Android rendering; if they remain separated, investigate the existing native conversion and Surface display path.
 - No automatic RGB range compensation has been enabled. Black appearing normal while highlights collapse is consistent with high-end clipping, but it is not sufficient evidence to choose Full/Limited expansion blindly.
+
+
+## v0.5.3 RGB highlight diagnosis and ARM64-only packaging
+
+### Measured grayscale baseline from the Hagibis / MACROSILICON UVC device
+
+Test mode: 1920×1080 MJPEG at 50 FPS, JPEG sampling 4:2:2. The probe decodes one copied original UVC MJPEG payload with Android BitmapFactory at half resolution, before the droiduvc native `uvc_any2rgb()` conversion and before Surface presentation. It samples ten center patches from the grayscale chart.
+
+| Expected | RGB HDMI input | YCbCr 4:4:4 HDMI input |
+|---:|---:|---:|
+| 16 | 6 | 22 |
+| 32 | 26 | 38 |
+| 64 | 63 | 71 |
+| 96 | 100 | 102 |
+| 128 | 137 | 134 |
+| 160 | 174 | 164 |
+| 192 | 211 | 197 |
+| 220 | 243 | 225 |
+| 240 | 255 | 244 |
+| 255 | 255 | 254 |
+
+Interpretation:
+- The RGB-input defect is already present in the UVC MJPEG payload as decoded by the probe; it is not first introduced by the app's later native MJPEG-to-RGB conversion or TextureView/Surface display stage.
+- In RGB mode, expected 240 and 255 both measure 255. The high-end has a clipped plateau in this sample; later processing cannot recover the distinction once both levels have become the same value.
+- The curve is broadly consistent with a range/level expansion plus an offset and high-end clipping, but this measurement alone does not uniquely identify whether the responsible stage is the capture card's HDMI receiver, its internal image processing/JPEG encoder, or HDMI range signaling. Do not blindly apply a Full/Limited transform to already-decoded JPEG RGB values.
+- In YCbCr 4:4:4 mode, the measured top levels remain distinct (244 and 254), matching the user's observation that this path looks more correct. Keep YCbCr as the verified fallback.
+- The diagnostic classifier now explicitly flags a 240/255 high-end plateau instead of incorrectly reporting that the highlight steps remain distinguishable.
+
+### Frame continuity observation
+
+A 50 FPS report showed 1,284 callbacks and 1,284 analyzed frames with zero app-side queue drops, but 18 UVC sequence gaps (latest sequence 1,302). The queue's drop count and UVC sequence discontinuities are different metrics. This suggests possible gaps upstream of the app analysis queue and should be rechecked over a longer capture; it is not yet proof of USB transport loss.
+
+### Packaging
+
+- Restrict both the app and local droiduvc native build to `arm64-v8a`; x86_64 is not packaged for the target Snapdragon 870 tablet.
+- No changes to the UVC brightness, contrast, saturation or hue controls are made automatically.

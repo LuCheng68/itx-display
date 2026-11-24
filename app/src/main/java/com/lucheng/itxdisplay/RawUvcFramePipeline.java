@@ -280,12 +280,19 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
                 result.append(expected[patch]).append("→").append(measured[patch]);
             }
 
-            if (measured[7] >= 248 && measured[8] >= 248 && measured[9] >= 248) {
-                result.append("；高光端疑似剪切（220/240/255 已接近同值）");
-            } else if (measured[7] >= 248 && measured[8] >= 248) {
-                result.append("；220 与 240 灰阶疑似合并");
+            int delta220To240 = measured[8] - measured[7];
+            int delta240To255 = measured[9] - measured[8];
+            if (measured[8] >= 250 && measured[9] >= 250 && delta240To255 <= 2) {
+                result.append("；检测到高光端平台/疑似剪切：240 与 255 两级已无法区分（Δ=")
+                        .append(delta240To255).append("）");
+            } else if (delta240To255 < 7) {
+                result.append("；高光端明显压缩：240→255 的实测差仅 ")
+                        .append(delta240To255);
+            } else if (delta220To240 < 8) {
+                result.append("；高光端渐进压缩：220→240 的实测差仅 ")
+                        .append(delta220To240);
             } else {
-                result.append("；高光阶梯仍有可测差异，需与画面观感及 YCbCr 基线比较");
+                result.append("；220/240/255 高光阶梯仍可区分；需与 YCbCr 基线比较");
             }
             return result.toString();
         } catch (RuntimeException e) {
