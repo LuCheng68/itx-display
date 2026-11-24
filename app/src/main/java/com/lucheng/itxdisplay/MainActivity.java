@@ -611,6 +611,16 @@ public class MainActivity extends Activity {
         report.append("\n色彩元数据限制：当前 droiduvc API 未向应用暴露原始 UVC 帧、")
                 .append("HDMI 输入色彩格式或可靠的 Full/Limited 范围标记。\n");
         report.append("当前处理：droiduvc 原生层先将 MJPEG/YUYV 转为 RGB，再输出到 Android Surface。\n");
+        report.append("\\nGPU / Vulkan 设备能力：\\n");
+        try {
+            report.append(UvcCamera.vulkanDeviceInfo()).append("\\n");
+        } catch (Exception e) {
+            report.append("Vulkan 信息读取失败：").append(e.getClass().getSimpleName())
+                    .append(" / ").append(safeErrorMessage(e)).append("\\n");
+        } catch (LinkageError e) {
+            report.append("Vulkan 原生库不可用：").append(e.getClass().getSimpleName()).append("\\n");
+        }
+        report.append("说明：以上只枚举系统 Vulkan GPU 和计算队列；尚未加载 ncnn/RIFE 模型，也不处理实时视频帧。\\n");
         report.append("注意：本报告只读取设备信息和控件能力，不会修改采集卡设置。");
         return report.toString();
     }

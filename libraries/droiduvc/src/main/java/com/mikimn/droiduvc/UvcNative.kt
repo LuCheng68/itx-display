@@ -45,6 +45,7 @@ internal object NativeUvc : UvcNative {
     external override fun open(fileDescriptor: Int): Long
     external override fun listModes(handle: Long): IntArray
     external override fun start(handle: Long, surface: Surface, width: Int, height: Int, fps: Int, preferredFormat: Int): IntArray
+    external fun vulkanDeviceInfo(): String
     external override fun setRawFrameListener(handle: Long, listener: RawFrameListener?)
     external override fun setRgbExperimentCompensation(handle: Long, enabled: Boolean)
     external override fun performanceStats(handle: Long): LongArray

@@ -1,10 +1,10 @@
-# ITX Display v0.5.5
+# ITX Display v0.5.6
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.5.5 (versionCode 16)
+- Application version: 0.5.6 (versionCode 17)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - Native ABI: arm64-v8a only (Snapdragon 870 / ARM64 target)
@@ -240,3 +240,11 @@ A 50 FPS report showed 1,284 callbacks and 1,284 analyzed frames with zero app-s
 - Added a separate capture-timestamp cadence measurement when libuvc supplies positive, strictly increasing capture-finished timestamps; devices/backends that do not supply usable timestamps are reported explicitly.
 - Added average and maximum time from raw-frame callback entry to analysis-worker start. This includes payload copying and queue wait, and is not presented as end-to-end display latency.
 - These metrics establish the timing budget for the next frame-interpolation prototype. They do not perform interpolation, add a display-buffering frame, or change the existing preview path.
+
+
+## v0.5.6 Vulkan device capability probe
+
+- Added a read-only native Vulkan probe using the Android system `libvulkan.so` loader.
+- The UVC diagnostics report now lists each Vulkan physical device, API version, driver version, vendor/device IDs, compute and graphics queue availability, local device memory, and selected optional extensions.
+- The probe runs during device diagnostics only. It does not access video frames, create a compute workload, load ncnn/RIFE, or change the existing UVC preview path.
+- This is a compatibility check before integrating an Android-callable RIFE/ncnn inference library. Vulkan enumeration success alone is not proof that a particular RIFE model can run at 1080p50.
