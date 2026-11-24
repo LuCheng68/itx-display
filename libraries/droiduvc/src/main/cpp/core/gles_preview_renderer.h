@@ -204,12 +204,12 @@ private:
 
     GLuint createRcasProgram() {
         static const char *prefix =
-                "#version 300 es\\n"
-                "precision highp float;\\n"
-                "precision highp int;\\n"
-                "#define A_GPU 1\\n"
-                "#define A_GLSL 1\\n"
-                "#define FSR_RCAS_F 1\\n";
+                "#version 300 es\n"
+                "precision highp float;\n"
+                "precision highp int;\n"
+                "#define A_GPU 1\n"
+                "#define A_GLSL 1\n"
+                "#define FSR_RCAS_F 1\n";
         static const char *body = R"ITXRCAS(
 uniform sampler2D uInputTexture;
 uniform sampler2D uRgbLut;
@@ -257,10 +257,10 @@ void main() {
             return 0;
         }
         static const char *vertexSource =
-                "#version 300 es\\n"
-                "layout(location=0) in vec2 aPosition;\\n"
-                "layout(location=1) in vec2 aTexCoord;\\n"
-                "void main(){ gl_Position=vec4(aPosition,0.0,1.0); }\\n";
+                "#version 300 es\n"
+                "layout(location=0) in vec2 aPosition;\n"
+                "layout(location=1) in vec2 aTexCoord;\n"
+                "void main(){ gl_Position=vec4(aPosition,0.0,1.0); }\n";
         GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
         if (!vertexShader) {
             fsrInitError_.store(2, std::memory_order_relaxed);
