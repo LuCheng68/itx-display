@@ -288,7 +288,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView rifeHint = new TextView(this);
-        rifeHint.setText("RIFE 4.6 Vulkan 实验：首次下载约 10 MB 模型。压力测试只测量 1080P 推理，不改变当前显示画面；每次最多运行 15 秒并自动停止，避免 GPU 长时间满载。");
+        rifeHint.setText("RIFE 4.6 Vulkan 实验：UVC 采集和显示保持原始 1080P；推理测试将帧缩小到 320×180，每两个输入间隔尝试生成一帧（理论目标 75 FPS）。测试输出暂不显示，每次最多运行 15 秒。");
         rifeHint.setTextColor(0xFF9FB2C9);
         rifeHint.setTextSize(11);
         rifeHint.setPadding(0, dp(8), 0, dp(3));
@@ -311,7 +311,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         rifeTestButton = new Button(this);
-        rifeTestButton.setText("启动 1080P RIFE 压力测试（15秒）");
+        rifeTestButton.setText("启动 RIFE 低分辨率测试（320×180）");
         rifeTestButton.setTextSize(12);
         rifeTestButton.setAllCaps(false);
         rifeTestButton.setEnabled(false);
@@ -961,7 +961,7 @@ public class MainActivity extends Activity {
                                 }
                                 if (rifeTestButton != null) {
                                     rifeTestButton.setEnabled(true);
-                                    rifeTestButton.setText("启动 1080P RIFE 压力测试（15秒）");
+                                    rifeTestButton.setText("启动 RIFE 低分辨率测试（320×180）");
                                 }
                                 showStatus("RIFE 4.6 Vulkan 初始化完成。当前显示画面仍为原始 50 FPS。");
                             });
@@ -1014,14 +1014,14 @@ public class MainActivity extends Activity {
                     mainHandler.post(() -> {
                         rifeTestEnabled = enabled;
                         rifeInferenceSummary = enabled
-                                ? "推理测试运行中：1080P · 目标约 40 次/秒 · 15 秒后自动停止"
+                                ? "推理测试运行中：320×180 · 每两个输入间隔尝试一帧 · 目标约 25 次/秒 · 15 秒后自动停止"
                                 : "推理测试已停止；显示画面未被修改";
                         if (enabled) {
                             mainHandler.postDelayed(rifeAutoStopRunnable, RIFE_TEST_MAX_DURATION_MS);
                         }
                         if (rifeTestButton != null) {
                             rifeTestButton.setText(enabled
-                                    ? "停止 RIFE 推理测试" : "启动 1080P RIFE 压力测试（15秒）");
+                                    ? "停止 RIFE 推理测试" : "启动 RIFE 低分辨率测试（320×180）");
                         }
                         if (rifeStatusView != null) {
                             rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
@@ -1030,7 +1030,7 @@ public class MainActivity extends Activity {
                         lastRifeSampleElapsedMs = android.os.SystemClock.elapsedRealtime();
                         recentRifeInferenceFps = 0.0;
                         showStatus(enabled
-                                ? "已启动 RIFE 1080P 推理测试；当前 Surface 仍显示原始视频。"
+                                ? "已启动 RIFE 低分辨率推理测试；Surface 仍显示原始 1080P 视频。"
                                 : "已停止 RIFE 推理测试。");
                     });
                 } catch (Exception e) {
@@ -1054,7 +1054,7 @@ public class MainActivity extends Activity {
                         rifeTestEnabled = false;
                         rifeInferenceSummary = "RIFE 压力测试已达 15 秒上限，自动停止；可查看本次统计。";
                         if (rifeTestButton != null) {
-                            rifeTestButton.setText("启动 1080P RIFE 压力测试（15秒）");
+                            rifeTestButton.setText("启动 RIFE 低分辨率测试（320×180）");
                         }
                         if (rifeStatusView != null) {
                             rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
@@ -1105,7 +1105,7 @@ public class MainActivity extends Activity {
                                 double avgMs = rs[1] > 0 ? rs[4] / rs[1] / 1_000_000.0 : 0.0;
                                 double copyAvgMs = rs[0] > 0 ? rs[6] / rs[0] / 1_000_000.0 : 0.0;
                                 rifeSummary = String.format(Locale.US,
-                                        "RIFE 推理：%.1f 次/秒（目标 40）· 成功 %d · 跳过 %d · 丢弃 %d\\n推理均值 %.2f ms / 峰值 %.2f ms · RGB复制均值 %.2f ms / 峰值 %.2f ms",
+                                        "RIFE 推理：%.1f 次/秒（目标 25）· 成功 %d · 跳过 %d · 丢弃 %d\\n推理均值 %.2f ms / 峰值 %.2f ms · RGB缩小/复制均值 %.2f ms / 峰值 %.2f ms",
                                         recentRifeInferenceFps, rs[1], rs[2], rs[3],
                                         avgMs, rs[5] / 1_000_000.0, copyAvgMs, rs[7] / 1_000_000.0);
                             }
@@ -1225,7 +1225,7 @@ public class MainActivity extends Activity {
             }
             if (rifeTestButton != null) {
                 rifeTestButton.setEnabled(false);
-                rifeTestButton.setText("启动 1080P RIFE 压力测试（15秒）");
+                rifeTestButton.setText("启动 RIFE 低分辨率测试（320×180）");
             }
             if (rifeStatusView != null) rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
         });
