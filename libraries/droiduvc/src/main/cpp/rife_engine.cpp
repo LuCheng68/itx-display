@@ -101,9 +101,9 @@ struct RifeInferenceEngine::Impl {
             if (shouldProcess) {
                 const auto start = std::chrono::steady_clock::now();
                 ncnn::Mat input0(first.width, first.height,
-                                 const_cast<uint8_t*>(first.rgb.data()), static_cast<size_t>(3), 1);
+                                 const_cast<uint8_t*>(first.rgb.data()), static_cast<size_t>(3), 3);
                 ncnn::Mat input1(second.width, second.height,
-                                 const_cast<uint8_t*>(second.rgb.data()), static_cast<size_t>(3), 1);
+                                 const_cast<uint8_t*>(second.rgb.data()), static_cast<size_t>(3), 3);
                 ncnn::Mat output(first.width, first.height, static_cast<size_t>(3), 3);
                 const int result = model->process(input0, input1, 0.5f, output);
                 const uint64_t elapsed = static_cast<uint64_t>(
