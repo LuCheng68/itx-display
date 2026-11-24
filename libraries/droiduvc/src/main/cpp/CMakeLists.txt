@@ -169,11 +169,34 @@ target_include_directories(itx_rife PRIVATE
 target_link_libraries(itx_rife PUBLIC ncnn)
 target_compile_options(itx_rife PRIVATE -O2)
 
+# Embed the upstream AMD FSR 1 shader portability and algorithm headers as
+# adjacent GLSL source strings. GLES does not require the optional include directive.
+set(ITX_FSR_VENDOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/fsr_vendor)
+set(ITX_FSR_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/fsr_generated)
+set(ITX_FSR_EMBEDDED_HEADER ${ITX_FSR_GENERATED_DIR}/fsr_shader_sources.h)
+file(MAKE_DIRECTORY ${ITX_FSR_GENERATED_DIR})
+add_custom_command(
+        OUTPUT ${ITX_FSR_EMBEDDED_HEADER}
+        COMMAND ${CMAKE_COMMAND}
+                -DFSR_A=${ITX_FSR_VENDOR_DIR}/ffx_a.h
+                -DFSR_FSR1=${ITX_FSR_VENDOR_DIR}/ffx_fsr1.h
+                -DOUTPUT_HEADER=${ITX_FSR_EMBEDDED_HEADER}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fsr_headers.cmake
+        DEPENDS
+                ${ITX_FSR_VENDOR_DIR}/ffx_a.h
+                ${ITX_FSR_VENDOR_DIR}/ffx_fsr1.h
+                ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fsr_headers.cmake
+        COMMENT "Embedding AMD FidelityFX FSR1 shader sources"
+        VERBATIM)
+add_custom_target(itx_fsr_shader_sources DEPENDS ${ITX_FSR_EMBEDDED_HEADER})
+
 add_library(droiduvc SHARED uvc_camera.cpp vulkan_probe.cpp rife_engine.cpp)
 # rife_engine.cpp includes the upstream RIFE API and ncnn Vulkan headers.
 # These include paths must also be visible to droiduvc, not only itx_rife.
+add_dependencies(droiduvc itx_fsr_shader_sources)
 target_include_directories(droiduvc PRIVATE
         ${itx_rife_source_SOURCE_DIR}/src
-        ${itx_ncnn_SOURCE_DIR}/src)
+        ${itx_ncnn_SOURCE_DIR}/src
+        ${ITX_FSR_GENERATED_DIR})
 target_compile_options(droiduvc PRIVATE -O2)
 target_link_libraries(droiduvc PRIVATE droiduvc_core LibUVC::UVCStatic usb-1.0 android log EGL GLESv3 ${ANDROID_VULKAN_LIBRARY} itx_rife)
