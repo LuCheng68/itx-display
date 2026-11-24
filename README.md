@@ -1,10 +1,10 @@
-# ITX Display v0.6.1
+# ITX Display v0.6.2
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.6.1 (versionCode 21)
+- Application version: 0.6.2 (versionCode 22)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - Native ABI: arm64-v8a only (Snapdragon 870 / ARM64 target)
