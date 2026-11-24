@@ -1,10 +1,10 @@
-# ITX Display v0.6.0
+# ITX Display v0.6.1
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.6.0 (versionCode 20)
+- Application version: 0.6.1 (versionCode 21)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - Native ABI: arm64-v8a only (Snapdragon 870 / ARM64 target)
@@ -271,3 +271,11 @@ A 50 FPS report showed 1,284 callbacks and 1,284 analyzed frames with zero app-s
 - Added inference and RGB-copy timing, throughput, skip and drop counters to the diagnostic report.
 - **This release is a throughput-validation build only.** RIFE output is currently measured and discarded; the existing UVC Surface path still displays original frames at the input frame rate. Model loading and inference remain off by default. No claim is made that Adreno 650 can sustain 1080p90 until the device test confirms it.
 - The RIFE and ncnn source projects retain their upstream licenses; review the included upstream license files before redistributing.
+
+
+## v0.6.1 RIFE FP16 arithmetic and bounded stress test
+
+- The pinned RIFE source previously forced `use_fp16_arithmetic = false`. CMake now applies a small, checked source patch so ncnn enables FP16 arithmetic only when the selected Vulkan device reports `support_fp16_arithmetic()`; unsupported devices keep the upstream-safe setting.
+- The RIFE device summary reports whether FP16 arithmetic is enabled, making the hardware capability and selected path visible in the copied diagnostic report.
+- The manual 1080p RIFE throughput stress test now stops automatically after 15 seconds. This prevents a forgotten benchmark from continuously saturating the Adreno GPU and disturbing the low-latency UVC preview.
+- This remains a throughput-validation experiment: generated frames are measured and discarded. The preview still displays the original UVC stream. FP16 numerical quality and speed must be checked on the Xiaomi Pad 5 Pro; no 1080p90 playback claim is made.
