@@ -191,6 +191,7 @@ class UvcCamera internal constructor(private val native: UvcNative, private var 
         private const val TAG = "UvcCamera"
 
         /** Reads the system Vulkan loader and physical-device capabilities without touching the video stream. */
+        @JvmStatic
         fun vulkanDeviceInfo(): String = NativeUvc.vulkanDeviceInfo()
 
         /** @throws IOException if the descriptor is not a usable UVC device. */
