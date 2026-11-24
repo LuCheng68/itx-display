@@ -75,6 +75,7 @@ public class MainActivity extends Activity {
     private Button rgbExperimentButton;
     private Button rifeModelButton;
     private Button rifeTestButton;
+    private Button fsrButton;
     private TextView rifeStatusView;
     private Button infoToggle;
     private volatile String baseDiagnosticsReport = "尚未连接 UVC 设备。";
@@ -87,6 +88,7 @@ public class MainActivity extends Activity {
     private volatile boolean rifeModelLoading = false;
     private volatile boolean rifeModelReady = false;
     private volatile boolean rifeTestEnabled = false;
+    private volatile boolean fsrEnabled = false;
     private volatile String rifeModelSummary = "RIFE 4.6：模型未加载";
     private volatile String rifeInferenceSummary = "RIFE 推理：未运行";
     private long lastRifeProcessedCount = 0L;
@@ -317,6 +319,22 @@ public class MainActivity extends Activity {
         rifeTestButton.setEnabled(false);
         rifeTestButton.setOnClickListener(v -> toggleRifeInferenceTest());
         panelContent.addView(rifeTestButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView fsrHint = new TextView(this);
+        fsrHint.setText("FSR1 RCAS：仅对原生 1920×1080 画面启用保守锐化（2.5 stops）；720P→1080P 的 EASU 尚未接入。默认关闭，不改变原始颜色处理。");
+        fsrHint.setTextColor(0xFF9FB2C9);
+        fsrHint.setTextSize(11);
+        fsrHint.setPadding(0, dp(8), 0, dp(3));
+        panelContent.addView(fsrHint);
+
+        fsrButton = new Button(this);
+        fsrButton.setText("开启 FSR1 RCAS（原生 1080P 锐化）");
+        fsrButton.setTextSize(12);
+        fsrButton.setAllCaps(false);
+        fsrButton.setEnabled(false);
+        fsrButton.setOnClickListener(v -> toggleFsr());
+        panelContent.addView(fsrButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView target = new TextView(this);
@@ -591,6 +609,7 @@ public class MainActivity extends Activity {
                     }
                     if (diagnosticsView != null) diagnosticsView.setText(cameraDiagnostics + "\n\n" + activeRawPipeline.getSummary());
                     if (colorReadButton != null) colorReadButton.setEnabled(true);
+                    if (fsrButton != null) fsrButton.setEnabled(true);
                     if (rifeModelButton != null && !rifeModelReady && !rifeModelLoading) {
                         rifeModelButton.setEnabled(true);
                     }
@@ -995,6 +1014,50 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void toggleFsr() {
+        if (!previewRunning || executorShutdown) {
+            showStatus("请先连接并启动 UVC 预览。");
+            return;
+        }
+        final boolean enabled = !fsrEnabled;
+        if (fsrButton != null) fsrButton.setEnabled(false);
+        try {
+            cameraExecutor.execute(() -> {
+                try {
+                    UvcCamera activeCamera = camera;
+                    if (activeCamera == null) throw new IllegalStateException("UVC 会话已结束");
+                    activeCamera.setFsrEnabled(enabled);
+                    long[] stats = activeCamera.performanceStats();
+                    boolean available = stats != null && stats.length >= 23 && stats[21] != 0;
+                    if (enabled && !available) {
+                        activeCamera.setFsrEnabled(false);
+                        throw new IllegalStateException("FSR1 RCAS 着色器不可用，请查看原生日志");
+                    }
+                    mainHandler.post(() -> {
+                        fsrEnabled = enabled;
+                        if (fsrButton != null) {
+                            fsrButton.setEnabled(previewRunning);
+                            fsrButton.setText(fsrEnabled
+                                    ? "关闭 FSR1 RCAS（原生 1080P 锐化）"
+                                    : "开启 FSR1 RCAS（原生 1080P 锐化）");
+                        }
+                        showStatus(fsrEnabled
+                                ? "FSR1 RCAS 已启用：当前仅处理原生 1920×1080 输入，锐化强度为保守档。"
+                                : "FSR1 RCAS 已关闭：恢复未锐化的 GLES 直通画面。");
+                    });
+                } catch (Exception e) {
+                    mainHandler.post(() -> {
+                        if (fsrButton != null) fsrButton.setEnabled(previewRunning);
+                        showStatus("FSR1 设置失败：" + e.getMessage());
+                    });
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            if (fsrButton != null) fsrButton.setEnabled(previewRunning);
+            showStatus("FSR1 设置任务未能启动。");
+        }
+    }
+
     private void toggleRifeInferenceTest() {
         if (!rifeModelReady || !previewRunning || executorShutdown) {
             showStatus("请先连接 UVC 并完成 RIFE 4.6 模型初始化。");
@@ -1096,7 +1159,7 @@ public class MainActivity extends Activity {
                                     stats[5] / frames / 1_000_000.0,
                                     stats[7] / frames / 1_000_000.0,
                                     stats[4] / 1_000_000.0);
-                            if (stats.length >= 18) {
+                            if (stats.length >= 23) {
                                 long submitted = stats[10];
                                 long presented = stats[11];
                                 long replaced = stats[12];
@@ -1113,6 +1176,18 @@ public class MainActivity extends Activity {
                                             stats[15] / divisor / 1_000_000.0,
                                             stats[16] / 1_000_000.0,
                                             stats[17]);
+                                    boolean fsrAvailable = stats[21] != 0;
+                                    boolean fsrActive = stats[22] != 0;
+                                    long fsrFrames = stats[18];
+                                    double fsrDivisor = Math.max(1L, fsrFrames);
+                                    summary += String.format(Locale.US,
+                                            "\\nFSR1 RCAS：%s · 着色器可用=%s · 应用帧 %d"
+                                                    + " · RCAS绘制调用均值 %.2f ms / 峰值 %.2f ms",
+                                            fsrActive ? "已启用" : "关闭",
+                                            fsrAvailable ? "是" : "否",
+                                            fsrFrames,
+                                            stats[19] / fsrDivisor / 1_000_000.0,
+                                            stats[20] / 1_000_000.0);
                                 } else {
                                     summary += "\\n预览后端：CPU Surface · GLES未启用/初始化失败";
                                 }
@@ -1231,6 +1306,7 @@ public class MainActivity extends Activity {
     private void closeCameraResources() {
         mainHandler.removeCallbacks(rifeAutoStopRunnable);
         previewRunning = false;
+        fsrEnabled = false;
         UvcCamera oldCamera = camera;
         UsbDeviceConnection oldConnection = usbConnection;
         Surface oldSurface = streamSurface;
@@ -1252,6 +1328,10 @@ public class MainActivity extends Activity {
             if (rifeTestButton != null) {
                 rifeTestButton.setEnabled(false);
                 rifeTestButton.setText("启动 RIFE 低分辨率测试（320×180）");
+            }
+            if (fsrButton != null) {
+                fsrButton.setEnabled(false);
+                fsrButton.setText("开启 FSR1 RCAS（原生 1080P 锐化）");
             }
             if (rifeStatusView != null) rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
         });
