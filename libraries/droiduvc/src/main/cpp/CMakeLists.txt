@@ -154,5 +154,10 @@ target_link_libraries(itx_rife PUBLIC ncnn)
 target_compile_options(itx_rife PRIVATE -O2)
 
 add_library(droiduvc SHARED uvc_camera.cpp vulkan_probe.cpp rife_engine.cpp)
+# rife_engine.cpp includes the upstream RIFE API and ncnn Vulkan headers.
+# These include paths must also be visible to droiduvc, not only itx_rife.
+target_include_directories(droiduvc PRIVATE
+        ${itx_rife_source_SOURCE_DIR}/src
+        ${itx_ncnn_SOURCE_DIR}/src)
 target_compile_options(droiduvc PRIVATE -O2)
 target_link_libraries(droiduvc PRIVATE droiduvc_core LibUVC::UVCStatic usb-1.0 android log ${ANDROID_VULKAN_LIBRARY} itx_rife)
