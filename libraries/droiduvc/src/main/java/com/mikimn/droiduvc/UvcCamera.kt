@@ -129,6 +129,13 @@ class UvcCamera internal constructor(private val native: UvcNative, private var 
         native.setRgbExperimentCompensation(handle, enabled)
     }
 
+    /** Enables the optional FSR1 RCAS pass for native 1920x1080 preview frames. */
+    @Synchronized
+    fun setFsrEnabled(enabled: Boolean) {
+        check(handle != 0L) { "Camera is closed" }
+        native.setFsrEnabled(handle, enabled)
+    }
+
     /** Loads the optional RIFE 4.6 model and initializes ncnn Vulkan on a background thread. */
     @Synchronized
     fun loadRifeModel(modelDirectory: String): String {
@@ -179,9 +186,8 @@ class UvcCamera internal constructor(private val native: UvcNative, private var 
     /**
      * Returns native cumulative timing counters. The first nine entries retain
      * the original frame/observer/decode/preview/end-to-end timing layout.
-     * Entries 9-17 report preview backend (0 CPU, 1 GLES active, 2 GLES failed),
-     * GLES submitted/rendered/replaced frame counts, upload and draw+present
-     * total/max nanoseconds, and the last GL/EGL error code.
+     * Entries 9-22 report preview backend, GLES counters/timings, FSR applied
+     * frame count, FSR draw-call CPU time, FSR shader availability and enable state.
      */
     @Synchronized
     fun performanceStats(): LongArray {
