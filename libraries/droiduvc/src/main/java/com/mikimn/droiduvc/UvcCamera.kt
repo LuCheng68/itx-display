@@ -177,9 +177,11 @@ class UvcCamera internal constructor(private val native: UvcNative, private var 
     }
 
     /**
-     * Returns native cumulative timing counters:
-     * frame count, observer total/max ns, JPEG decode total/max ns,
-     * Surface blit total/max ns, and end-to-end callback total/max ns.
+     * Returns native cumulative timing counters. The first nine entries retain
+     * the original frame/observer/decode/preview/end-to-end timing layout.
+     * Entries 9-17 report preview backend (0 CPU, 1 GLES active, 2 GLES failed),
+     * GLES submitted/rendered/replaced frame counts, upload and draw+present
+     * total/max nanoseconds, and the last GL/EGL error code.
      */
     @Synchronized
     fun performanceStats(): LongArray {
