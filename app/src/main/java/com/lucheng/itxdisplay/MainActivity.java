@@ -1084,13 +1084,39 @@ public class MainActivity extends Activity {
                         long[] stats = activeCamera.performanceStats();
                         if (stats != null && stats.length >= 9 && stats[0] > 0) {
                             double frames = stats[0];
+                            int previewMode = stats.length >= 18 ? (int) stats[9] : -1;
+                            String previewStage = previewMode == 1 ? "GLES队列提交"
+                                    : previewMode == 2 ? "GLES异常后CPU拷贝"
+                                    : previewMode == 0 ? "CPU Surface拷贝" : "Surface拷贝";
                             summary = String.format(Locale.US,
-                                    "原生耗时均值：JNI %.2f ms · MJPEG解码 %.2f ms · Surface拷贝 %.2f ms · 总计 %.2f ms；解码峰值 %.2f ms",
+                                    "原生耗时均值：JNI %.2f ms · MJPEG解码 %.2f ms · %s %.2f ms · 总计 %.2f ms；解码峰值 %.2f ms",
                                     stats[1] / frames / 1_000_000.0,
                                     stats[3] / frames / 1_000_000.0,
+                                    previewStage,
                                     stats[5] / frames / 1_000_000.0,
                                     stats[7] / frames / 1_000_000.0,
                                     stats[4] / 1_000_000.0);
+                            if (stats.length >= 18) {
+                                long submitted = stats[10];
+                                long presented = stats[11];
+                                long replaced = stats[12];
+                                if (previewMode == 1 || previewMode == 2) {
+                                    double divisor = Math.max(1L, presented);
+                                    summary += String.format(Locale.US,
+                                            "\\n预览后端：%s · 提交 %d · GLES呈现 %d · 队列替换 %d"
+                                                    + " · RGB纹理上传均值 %.2f ms / 峰值 %.2f ms"
+                                                    + " · 绘制+交换均值 %.2f ms / 峰值 %.2f ms · GL/EGL错误码 %d",
+                                            previewMode == 1 ? "GLES3 GPU直通" : "GLES已停止，已回退CPU",
+                                            submitted, presented, replaced,
+                                            stats[13] / divisor / 1_000_000.0,
+                                            stats[14] / 1_000_000.0,
+                                            stats[15] / divisor / 1_000_000.0,
+                                            stats[16] / 1_000_000.0,
+                                            stats[17]);
+                                } else {
+                                    summary += "\\n预览后端：CPU Surface · GLES未启用/初始化失败";
+                                }
+                            }
                         }
                         if (rifeModelReady) {
                             long[] rs = activeCamera.rifeInferenceStats();
