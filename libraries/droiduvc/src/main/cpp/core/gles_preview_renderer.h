@@ -445,7 +445,10 @@ void main() {
         surface_ = EGL_NO_SURFACE;
         context_ = EGL_NO_CONTEXT;
         texture_ = vbo_ = vao_ = program_ = 0;
-        textureWidth_ = textureHeight_ = 0;
+        rcasProgram_ = fsrTexture_ = fsrFramebuffer_ = 0;
+        textureWidth_ = textureHeight_ = fsrTargetWidth_ = fsrTargetHeight_ = 0;
+        fsrAvailable_.store(false, std::memory_order_release);
+        fsrEnabled_.store(false, std::memory_order_release);
     }
 
     void run() {
