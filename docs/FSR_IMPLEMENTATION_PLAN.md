@@ -1,6 +1,6 @@
 # ITX Display FSR 1 implementation plan
 
-Status: design baseline for the FSR implementation on the development branch. This document is not a claim that FSR rendering is already implemented or device-validated.
+Status: Phase A pass-through GLES renderer prototype is implemented on the development branch. It attempts GLES for preview and falls back to the CPU blitter if EGL/GLES initialization fails. The code has not yet been independently build-verified or confirmed by a renderer-specific device report. FSR EASU/RCAS is not implemented.
 
 ## User-selected scope
 
@@ -39,10 +39,12 @@ The first FSR integration therefore needs a separate GPU-backed renderer rather 
 ## Implementation sequence
 
 ### Phase A - renderer foundation
-- Add an opt-in GLES renderer behind a feature flag; default remains the existing CPU renderer.
-- Add a bounded RGB frame handoff from the UVC callback to the render thread.
-- Add EGL context/surface lifecycle, RGB texture upload, simple pass-through shader and timing counters.
-- Validate that pass-through GPU rendering matches the existing preview before enabling FSR shaders.
+- [x] Add a dedicated GLES render thread with EGL window-surface/context lifecycle and a simple pass-through shader.
+- [x] Add a bounded, latest-frame-wins RGB handoff from the UVC callback; the render queue is limited to one pending frame.
+- [x] Add CPU fallback when GLES initialization fails, and restore RGBX buffer geometry if the GLES render thread fails later.
+- [x] Expose renderer state, submitted/rendered/replaced frame counts, GL texture-upload call time, and draw-plus-swap time in native diagnostics.
+- [ ] Build the current branch and verify on Xiaomi Pad 5 Pro that GLES is actually active, output orientation/aspect/color match the CPU preview, and the Surface lifecycle is stable.
+- [ ] Compare diagnostic measurements before treating the GPU path as validated. `glTexImage2D/glTexSubImage2D` timing is CPU time inside the GL upload calls, not a GPU hardware timer; draw-plus-swap includes any `eglSwapBuffers` wait and is not pure shader execution time.
 
 ### Phase B - FSR 1 shaders
 - Port the upstream EASU and RCAS shader logic to GLSL ES 3.1 compute shaders compatible with the Android GLES implementation, or use a Vulkan compute backend if the GLES path cannot meet correctness/performance requirements.
@@ -66,11 +68,12 @@ The first FSR integration therefore needs a separate GPU-backed renderer rather 
 - AMD's guidance expects perceptual (sRGB-like) input. The app's existing color/range interpretation must remain unchanged until independently validated.
 - No claim of real-time performance is made until the target Xiaomi Pad 5 Pro / Adreno 650 has been tested.
 
-## Initial diagnostics to add
+## Diagnostics status and remaining fields
 
-- Renderer: CPU fallback / GLES / Vulkan.
-- Input and output dimensions.
-- Texture upload ms, EASU ms, RCAS ms, draw/present ms.
-- Queue depth, dropped frames, rendered FPS.
-- FSR mode: Off / 720p EASU+RCAS / 1080p RCAS.
-- GPU renderer/vendor/version and shader compile errors.
+- [x] Renderer backend: CPU fallback / GLES active / GLES stopped and CPU fallback.
+- [x] Submitted, successfully swapped, and replaced-frame counts.
+- [x] CPU time spent in GL texture upload calls and draw-plus-`eglSwapBuffers` time.
+- [ ] Input/output dimensions and actual preview FPS on the GLES thread.
+- [ ] GPU timer-query measurements if supported; otherwise clearly retain CPU-side GL call timings.
+- [ ] EASU / RCAS timings and FSR mode after those shader passes are implemented.
+- [ ] GPU renderer/vendor/version and detailed shader compile errors.
