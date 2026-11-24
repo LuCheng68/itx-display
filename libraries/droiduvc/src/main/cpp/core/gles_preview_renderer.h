@@ -352,11 +352,17 @@ void main() {
         }
 
         bool fsrApplied = false;
+        const bool fsrRequested = fsrEnabled_.load(std::memory_order_acquire) &&
+                                  width == 1920 && height == 1080;
         const auto fsrStart = Clock::now();
-        if (fsrEnabled_.load(std::memory_order_acquire) &&
-            width == 1920 && height == 1080 && rcasProgram_ != 0 &&
-            ensureRcasTarget(width, height)) {
-            glBindFramebuffer(GL_FRAMEBUFFER, fsrFramebuffer_);
+        if (fsrRequested) {
+            if (rcasProgram_ == 0 || !ensureRcasTarget(width, height)) {
+                fsrAvailable_.store(false, std::memory_order_release);
+                fsrEnabled_.store(false, std::memory_order_release);
+                __android_log_print(ANDROID_LOG_ERROR, "UvcGles",
+                                    "FSR1 RCAS target unavailable; disabling RCAS");
+            } else {
+                glBindFramebuffer(GL_FRAMEBUFFER, fsrFramebuffer_);
             glViewport(0, 0, width, height);
             glUseProgram(rcasProgram_);
             glActiveTexture(GL_TEXTURE0);
@@ -375,12 +381,13 @@ void main() {
                 __android_log_print(ANDROID_LOG_ERROR, "UvcGles",
                                     "FSR1 RCAS draw failed (GL error 0x%x); disabling RCAS", fsrError);
             }
-            const uint64_t fsrNs = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - fsrStart).count());
-            if (fsrApplied) {
-                fsrAppliedFrames_.fetch_add(1, std::memory_order_relaxed);
-                fsrDrawCallTotalNs_.fetch_add(fsrNs, std::memory_order_relaxed);
-                updateMax(fsrDrawCallMaxNs_, fsrNs);
+                const uint64_t fsrNs = static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - fsrStart).count());
+                if (fsrApplied) {
+                    fsrAppliedFrames_.fetch_add(1, std::memory_order_relaxed);
+                    fsrDrawCallTotalNs_.fetch_add(fsrNs, std::memory_order_relaxed);
+                    updateMax(fsrDrawCallMaxNs_, fsrNs);
+                }
             }
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
