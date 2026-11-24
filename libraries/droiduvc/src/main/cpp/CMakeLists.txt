@@ -141,7 +141,6 @@ foreach(shader_name
 endforeach()
 
 add_custom_target(itx_rife_shader_headers DEPENDS ${ITX_RIFE_SHADER_HEADERS})
-add_library(itx_rife STATIC
 # The pinned RIFE source disables fp16 arithmetic unconditionally. For Vulkan
 # devices that explicitly advertise support, allow ncnn to use fp16 arithmetic.
 # This is a guarded optimization; unsupported devices retain the upstream setting.
@@ -157,6 +156,8 @@ endif()
 set(ITX_RIFE_PATCHED_CPP ${CMAKE_CURRENT_BINARY_DIR}/rife_fp16.cpp)
 file(WRITE ${ITX_RIFE_PATCHED_CPP} "${ITX_RIFE_CPP_PATCHED}")
 
+
+add_library(itx_rife STATIC
         ${ITX_RIFE_PATCHED_CPP}
         ${itx_rife_source_SOURCE_DIR}/src/warp.cpp
         ${ITX_RIFE_SHADER_HEADERS})
