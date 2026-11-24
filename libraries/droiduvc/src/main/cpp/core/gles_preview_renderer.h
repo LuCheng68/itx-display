@@ -68,6 +68,7 @@ public:
         const size_t packedStride = static_cast<size_t>(width) * 3;
         std::lock_guard<std::mutex> lock(mutex_);
         if (stopping_) return false;
+        if (frame_.empty() && !spare_.empty()) frame_.swap(spare_);
         frame_.resize(packedStride * static_cast<size_t>(height));
         for (int y = 0; y < height; ++y) {
             std::memcpy(frame_.data() + static_cast<size_t>(y) * packedStride,
@@ -259,18 +260,24 @@ private:
         }
         if (ok) {
             for (;;) {
-                std::vector<uint8_t> pixels;
                 int width = 0, height = 0;
                 {
                     std::unique_lock<std::mutex> lock(mutex_);
                     frameCv_.wait(lock, [this] { return stopping_ || hasFrame_; });
                     if (stopping_) break;
-                    pixels.swap(frame_);
+                    renderBuffer_.swap(frame_);
                     width = frameWidth_;
                     height = frameHeight_;
                     hasFrame_ = false;
                 }
-                render(pixels, width, height);
+                render(renderBuffer_, width, height);
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    // Recycle the completed buffer without overwriting a newer
+                    // frame that may have arrived while the GPU was rendering.
+                    if (frame_.empty()) frame_.swap(renderBuffer_);
+                    else if (spare_.empty()) spare_.swap(renderBuffer_);
+                }
                 if (eglGetError() != EGL_SUCCESS) break;
             }
         }
@@ -292,6 +299,8 @@ private:
     std::thread worker_;
     ANativeWindow *window_ = nullptr;
     std::vector<uint8_t> frame_;
+    std::vector<uint8_t> renderBuffer_;
+    std::vector<uint8_t> spare_;
     int frameWidth_ = 0;
     int frameHeight_ = 0;
     bool hasFrame_ = false;
