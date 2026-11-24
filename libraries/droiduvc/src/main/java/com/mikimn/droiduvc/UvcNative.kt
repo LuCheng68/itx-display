@@ -16,6 +16,9 @@ internal interface UvcNative {
     fun start(handle: Long, surface: Surface, width: Int, height: Int, fps: Int, preferredFormat: Int): IntArray
     fun setRawFrameListener(handle: Long, listener: RawFrameListener?)
     fun setRgbExperimentCompensation(handle: Long, enabled: Boolean)
+    fun loadRifeModel(handle: Long, modelDirectory: String): String
+    fun setRifeInferenceEnabled(handle: Long, enabled: Boolean)
+    fun rifeInferenceStats(handle: Long): LongArray
     fun performanceStats(handle: Long): LongArray
     fun stop(handle: Long)
     fun close(handle: Long)
@@ -48,6 +51,9 @@ internal object NativeUvc : UvcNative {
     external fun vulkanDeviceInfo(): String
     external override fun setRawFrameListener(handle: Long, listener: RawFrameListener?)
     external override fun setRgbExperimentCompensation(handle: Long, enabled: Boolean)
+    external override fun loadRifeModel(handle: Long, modelDirectory: String): String
+    external override fun setRifeInferenceEnabled(handle: Long, enabled: Boolean)
+    external override fun rifeInferenceStats(handle: Long): LongArray
     external override fun performanceStats(handle: Long): LongArray
     external override fun stop(handle: Long)
     external override fun close(handle: Long)

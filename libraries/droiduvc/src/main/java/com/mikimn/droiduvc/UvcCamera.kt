@@ -129,6 +129,27 @@ class UvcCamera internal constructor(private val native: UvcNative, private var 
         native.setRgbExperimentCompensation(handle, enabled)
     }
 
+    /** Loads the optional RIFE 4.6 model and initializes ncnn Vulkan on a background thread. */
+    @Synchronized
+    fun loadRifeModel(modelDirectory: String): String {
+        check(handle != 0L) { "Camera is closed" }
+        return native.loadRifeModel(handle, modelDirectory)
+    }
+
+    /** Enables a bounded, background RIFE throughput test; it does not alter Surface presentation. */
+    @Synchronized
+    fun setRifeInferenceEnabled(enabled: Boolean) {
+        check(handle != 0L) { "Camera is closed" }
+        native.setRifeInferenceEnabled(handle, enabled)
+    }
+
+    /** Returns submitted, processed, skipped, dropped, inference total/max ns, copy total/max ns, and pairs. */
+    @Synchronized
+    fun rifeInferenceStats(): LongArray {
+        check(handle != 0L) { "Camera is closed" }
+        return native.rifeInferenceStats(handle)
+    }
+
     @Synchronized
     fun setRawFrameListener(listener: RawFrameListener?) {
         check(handle != 0L) { "Camera is closed" }

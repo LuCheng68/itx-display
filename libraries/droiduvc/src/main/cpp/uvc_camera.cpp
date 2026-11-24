@@ -8,8 +8,10 @@
 
 #include "blit.h"
 #include "stream_mode.h"
+#include "rife_engine.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -17,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <memory>
 #include <vector>
 
 #define TAG "UvcCamera"
@@ -48,6 +51,8 @@ struct Camera {
     uint64_t totalFrameNs = 0;
     uint64_t totalFrameMaxNs = 0;
     std::atomic<bool> rgbExperimentCompensation{false};
+    std::shared_ptr<droiduvc::RifeInferenceEngine> rifeEngine;
+    bool rifeInferenceEnabled = false;
     std::mutex mutex;
 };
 
@@ -243,6 +248,14 @@ void onFrame(uvc_frame_t *frame, void *user) {
     if (err != UVC_SUCCESS) {
         if (cam->failedFrames++ < 5) LOGE("Dropping frame: %s", uvc_strerror(err));
         return;
+    }
+
+    // Optional RIFE throughput test. Copy decoded RGB into a bounded worker queue;
+    // the existing Surface preview remains untouched and is still the displayed output.
+    if (cam->rifeInferenceEnabled && cam->rifeEngine) {
+        cam->rifeEngine->submit(
+                static_cast<const uint8_t *>(cam->rgb->data),
+                cam->rgb->width, cam->rgb->height, cam->rgb->step, frame->sequence);
     }
 
     const auto blitStart = Clock::now();
@@ -516,6 +529,64 @@ Java_com_mikimn_droiduvc_NativeUvc_deviceStrings(JNIEnv *env, jobject, jlong han
     return result;
 }
 
+JNIEXPORT jstring JNICALL
+Java_com_mikimn_droiduvc_NativeUvc_loadRifeModel(JNIEnv *env, jobject, jlong handle, jstring modelDirectory) {
+    auto *cam = reinterpret_cast<Camera *>(handle);
+    if (cam == nullptr || modelDirectory == nullptr) return nullptr;
+
+    const char *path = env->GetStringUTFChars(modelDirectory, nullptr);
+    if (path == nullptr) return nullptr;
+    std::string modelPath(path);
+    env->ReleaseStringUTFChars(modelDirectory, path);
+
+    auto engine = std::make_shared<droiduvc::RifeInferenceEngine>();
+    std::string error;
+    if (!engine->initialize(modelPath, error)) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), error.c_str());
+        return nullptr;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(cam->mutex);
+        cam->rifeInferenceEnabled = false;
+        cam->rifeEngine = engine;
+    }
+    const std::string info = engine->deviceInfo();
+    return env->NewStringUTF(info.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_com_mikimn_droiduvc_NativeUvc_setRifeInferenceEnabled(
+        JNIEnv *, jobject, jlong handle, jboolean enabled) {
+    auto *cam = reinterpret_cast<Camera *>(handle);
+    if (cam == nullptr) return;
+    std::shared_ptr<droiduvc::RifeInferenceEngine> engine;
+    {
+        std::lock_guard<std::mutex> lock(cam->mutex);
+        engine = cam->rifeEngine;
+        cam->rifeInferenceEnabled = enabled == JNI_TRUE && engine != nullptr;
+    }
+    if (engine) engine->setEnabled(enabled == JNI_TRUE);
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_mikimn_droiduvc_NativeUvc_rifeInferenceStats(JNIEnv *env, jobject, jlong handle) {
+    auto *cam = reinterpret_cast<Camera *>(handle);
+    if (cam == nullptr) return nullptr;
+    std::shared_ptr<droiduvc::RifeInferenceEngine> engine;
+    {
+        std::lock_guard<std::mutex> lock(cam->mutex);
+        engine = cam->rifeEngine;
+    }
+    const std::array<uint64_t, 9> values = engine
+            ? engine->stats() : std::array<uint64_t, 9>{};
+    jlong out[9];
+    for (int i = 0; i < 9; ++i) out[i] = static_cast<jlong>(values[static_cast<size_t>(i)]);
+    jlongArray result = env->NewLongArray(9);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 9, out);
+    return result;
+}
+
 JNIEXPORT void JNICALL
 Java_com_mikimn_droiduvc_NativeUvc_setRgbExperimentCompensation(
         JNIEnv *, jobject, jlong handle, jboolean enabled) {
@@ -558,6 +629,8 @@ Java_com_mikimn_droiduvc_NativeUvc_close(JNIEnv *env, jobject, jlong handle) {
     auto *cam = reinterpret_cast<Camera *>(handle);
     uvc_stop_streaming(cam->devh);
     releaseWindow(cam);
+    cam->rifeInferenceEnabled = false;
+    cam->rifeEngine.reset();
     uvc_close(cam->devh);
     uvc_exit(cam->ctx);
     if (cam->rawFrameListener != nullptr) {

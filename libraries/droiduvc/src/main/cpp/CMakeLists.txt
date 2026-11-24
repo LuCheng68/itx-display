@@ -61,7 +61,98 @@ endif()
 add_subdirectory(core)
 target_compile_options(droiduvc_core PRIVATE -O2)
 
-add_library(droiduvc SHARED uvc_camera.cpp vulkan_probe.cpp)
-target_compile_options(droiduvc PRIVATE -O2)
+# RIFE 4.6 + ncnn Vulkan: build the inference library, not the upstream CLI.
+# Pin both source revisions so the native build remains reproducible.
+set(NCNN_VULKAN ON CACHE BOOL "" FORCE)
+set(NCNN_VULKAN_ONLINE_SPIRV ON CACHE BOOL "" FORCE)
+set(NCNN_OPENMP OFF CACHE BOOL "" FORCE)
+set(NCNN_SHARED_LIB OFF CACHE BOOL "" FORCE)
+set(NCNN_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(NCNN_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(NCNN_BUILD_BENCHMARK OFF CACHE BOOL "" FORCE)
+set(NCNN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(NCNN_INSTALL_SDK OFF CACHE BOOL "" FORCE)
+set(NCNN_SYSTEM_GLSLANG OFF CACHE BOOL "" FORCE)
+set(NCNN_INT8 ON CACHE BOOL "" FORCE)
+set(NCNN_PIXEL ON CACHE BOOL "" FORCE)
+
 find_library(ANDROID_VULKAN_LIBRARY vulkan REQUIRED)
-target_link_libraries(droiduvc PRIVATE droiduvc_core LibUVC::UVCStatic usb-1.0 android log ${ANDROID_VULKAN_LIBRARY})
+set(Vulkan_LIBRARY ${ANDROID_VULKAN_LIBRARY} CACHE FILEPATH "" FORCE)
+set(Vulkan_INCLUDE_DIR ${CMAKE_SYSROOT}/usr/include CACHE PATH "" FORCE)
+
+FetchContent_Declare(itx_ncnn
+        GIT_REPOSITORY https://github.com/Tencent/ncnn.git
+        GIT_TAG b4ba207c18d3103d6df890c0e3a97b469b196b26
+        GIT_SUBMODULES glslang
+        GIT_SUBMODULES_RECURSE TRUE
+        GIT_PROGRESS TRUE)
+FetchContent_GetProperties(itx_ncnn)
+if(NOT itx_ncnn_POPULATED)
+    FetchContent_Populate(itx_ncnn)
+endif()
+add_subdirectory(${itx_ncnn_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/itx_ncnn EXCLUDE_FROM_ALL)
+
+FetchContent_Declare(itx_rife_source
+        GIT_REPOSITORY https://github.com/nihui/rife-ncnn-vulkan.git
+        GIT_TAG a7532fc3f9f8f008cd6eecd6f2ffe2a9698e0cf7
+        GIT_SUBMODULES ""
+        GIT_PROGRESS TRUE)
+FetchContent_GetProperties(itx_rife_source)
+if(NOT itx_rife_source_POPULATED)
+    FetchContent_Populate(itx_rife_source)
+endif()
+
+set(ITX_RIFE_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/rife_shader_headers)
+file(MAKE_DIRECTORY ${ITX_RIFE_SHADER_OUTPUT_DIR})
+set(ITX_RIFE_SHADER_HEADERS)
+function(itx_add_rife_shader shader_name)
+    set(shader_src ${itx_rife_source_SOURCE_DIR}/src/${shader_name}.comp)
+    set(shader_header ${ITX_RIFE_SHADER_OUTPUT_DIR}/${shader_name}.comp.hex.h)
+    add_custom_command(
+            OUTPUT ${shader_header}
+            COMMAND ${CMAKE_COMMAND} -DSHADER_SRC=${shader_src}
+                    -DSHADER_COMP_HEADER=${shader_header}
+                    -P ${itx_rife_source_SOURCE_DIR}/src/generate_shader_comp_header.cmake
+            DEPENDS ${shader_src}
+                    ${itx_rife_source_SOURCE_DIR}/src/generate_shader_comp_header.cmake
+            COMMENT "Embedding RIFE shader ${shader_name}"
+            VERBATIM)
+    set(ITX_RIFE_SHADER_HEADERS ${ITX_RIFE_SHADER_HEADERS} ${shader_header} PARENT_SCOPE)
+endfunction()
+
+foreach(shader_name
+        rife_preproc
+        rife_postproc
+        rife_preproc_tta
+        rife_postproc_tta
+        rife_flow_tta_avg
+        rife_v2_flow_tta_avg
+        rife_v4_flow_tta_avg
+        rife_flow_tta_temporal_avg
+        rife_v2_flow_tta_temporal_avg
+        rife_v4_flow_tta_temporal_avg
+        rife_out_tta_temporal_avg
+        rife_v4_timestep
+        rife_v4_timestep_tta
+        warp
+        warp_pack4
+        warp_pack8)
+    itx_add_rife_shader(${shader_name})
+endforeach()
+
+add_custom_target(itx_rife_shader_headers DEPENDS ${ITX_RIFE_SHADER_HEADERS})
+add_library(itx_rife STATIC
+        ${itx_rife_source_SOURCE_DIR}/src/rife.cpp
+        ${itx_rife_source_SOURCE_DIR}/src/warp.cpp
+        ${ITX_RIFE_SHADER_HEADERS})
+add_dependencies(itx_rife itx_rife_shader_headers)
+target_include_directories(itx_rife PRIVATE
+        ${itx_rife_source_SOURCE_DIR}/src
+        ${itx_ncnn_SOURCE_DIR}/src
+        ${ITX_RIFE_SHADER_OUTPUT_DIR})
+target_link_libraries(itx_rife PUBLIC ncnn)
+target_compile_options(itx_rife PRIVATE -O2)
+
+add_library(droiduvc SHARED uvc_camera.cpp vulkan_probe.cpp rife_engine.cpp)
+target_compile_options(droiduvc PRIVATE -O2)
+target_link_libraries(droiduvc PRIVATE droiduvc_core LibUVC::UVCStatic usb-1.0 android log ${ANDROID_VULKAN_LIBRARY} itx_rife)

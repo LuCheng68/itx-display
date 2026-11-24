@@ -56,6 +56,7 @@ public class MainActivity extends Activity {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService cameraExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService rifeDownloadExecutor = Executors.newSingleThreadExecutor();
 
     private UsbManager usbManager;
     private TextureView previewView;
@@ -70,6 +71,9 @@ public class MainActivity extends Activity {
     private Button copyDiagnosticsButton;
     private Button grayProbeButton;
     private Button rgbExperimentButton;
+    private Button rifeModelButton;
+    private Button rifeTestButton;
+    private TextView rifeStatusView;
     private Button infoToggle;
     private volatile String baseDiagnosticsReport = "尚未连接 UVC 设备。";
     private volatile String diagnosticsReport = "尚未连接 UVC 设备。";
@@ -78,6 +82,14 @@ public class MainActivity extends Activity {
     private volatile boolean rgbExperimentEnabled = false;
     private volatile boolean nativePerfReadPending = false;
     private volatile String nativePerfSummary = "原生阶段耗时：等待统计";
+    private volatile boolean rifeModelLoading = false;
+    private volatile boolean rifeModelReady = false;
+    private volatile boolean rifeTestEnabled = false;
+    private volatile String rifeModelSummary = "RIFE 4.6：模型未加载";
+    private volatile String rifeInferenceSummary = "RIFE 推理：未运行";
+    private long lastRifeProcessedCount = 0L;
+    private long lastRifeSampleElapsedMs = 0L;
+    private double recentRifeInferenceFps = 0.0;
     private boolean videoInfoVisible = false;
     private int videoWidth = TARGET_WIDTH;
     private int videoHeight = TARGET_HEIGHT;
@@ -271,6 +283,38 @@ public class MainActivity extends Activity {
         rgbExperimentButton.setAllCaps(false);
         rgbExperimentButton.setOnClickListener(v -> toggleRgbExperimentCompensation());
         panelContent.addView(rgbExperimentButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView rifeHint = new TextView(this);
+        rifeHint.setText("RIFE 4.6 Vulkan 实验：首次下载约 10 MB 模型。测试阶段只测量 1080P 推理，不改变当前显示画面；目标是每 5 个输入间隔处理 4 个，约 90 FPS。");
+        rifeHint.setTextColor(0xFF9FB2C9);
+        rifeHint.setTextSize(11);
+        rifeHint.setPadding(0, dp(8), 0, dp(3));
+        panelContent.addView(rifeHint);
+
+        rifeStatusView = new TextView(this);
+        rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
+        rifeStatusView.setTextColor(0xFFB8C7D9);
+        rifeStatusView.setTextSize(11);
+        rifeStatusView.setPadding(0, dp(3), 0, dp(4));
+        panelContent.addView(rifeStatusView);
+
+        rifeModelButton = new Button(this);
+        rifeModelButton.setText("下载并初始化 RIFE 4.6");
+        rifeModelButton.setTextSize(12);
+        rifeModelButton.setAllCaps(false);
+        rifeModelButton.setEnabled(false);
+        rifeModelButton.setOnClickListener(v -> downloadAndLoadRifeModel());
+        panelContent.addView(rifeModelButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        rifeTestButton = new Button(this);
+        rifeTestButton.setText("启动 1080P / 90 FPS 推理测试");
+        rifeTestButton.setTextSize(12);
+        rifeTestButton.setAllCaps(false);
+        rifeTestButton.setEnabled(false);
+        rifeTestButton.setOnClickListener(v -> toggleRifeInferenceTest());
+        panelContent.addView(rifeTestButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView target = new TextView(this);
@@ -545,6 +589,9 @@ public class MainActivity extends Activity {
                     }
                     if (diagnosticsView != null) diagnosticsView.setText(cameraDiagnostics + "\n\n" + activeRawPipeline.getSummary());
                     if (colorReadButton != null) colorReadButton.setEnabled(true);
+                    if (rifeModelButton != null && !rifeModelReady && !rifeModelLoading) {
+                        rifeModelButton.setEnabled(true);
+                    }
                 });
             } catch (Exception e) {
                 previewRunning = false;
@@ -752,7 +799,9 @@ public class MainActivity extends Activity {
         RawUvcFramePipeline pipeline = rawFramePipeline;
         String rawSummary = pipeline == null ? "UVC 原始帧：--" : pipeline.getDetailedReport();
         String report = diagnosticsReport + "\n\n" + rawSummary
-                + "\n" + nativePerfSummary;
+                + "\n" + nativePerfSummary
+                + "\n" + rifeModelSummary
+                + "\n" + rifeInferenceSummary;
         clipboard.setPrimaryClip(ClipData.newPlainText("ITX Display UVC diagnostics", report));
         showStatus("UVC 诊断报告已复制。");
     }
@@ -864,12 +913,136 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void downloadAndLoadRifeModel() {
+        if (!previewRunning || executorShutdown) {
+            showStatus("请先连接并启动 UVC 预览，再初始化 RIFE。");
+            return;
+        }
+        if (rifeModelReady || rifeModelLoading) return;
+        rifeModelLoading = true;
+        if (rifeModelButton != null) rifeModelButton.setEnabled(false);
+        if (rifeStatusView != null) rifeStatusView.setText("RIFE 4.6：正在下载并校验模型……");
+        showStatus("正在下载 RIFE 4.6 模型（约 10 MB），不会影响当前画面。");
+
+        try {
+            rifeDownloadExecutor.execute(() -> {
+                try {
+                    java.io.File modelDirectory = RifeModelInstaller.install(
+                            getApplicationContext(),
+                            (fileName, percent) -> mainHandler.post(() -> {
+                                if (rifeStatusView != null && rifeModelLoading) {
+                                    rifeStatusView.setText("RIFE 4.6：下载 " + fileName + " " + percent + "%");
+                                }
+                            }));
+                    if (executorShutdown) return;
+                    cameraExecutor.execute(() -> {
+                        try {
+                            UvcCamera activeCamera = camera;
+                            if (activeCamera == null || !previewRunning) {
+                                throw new IllegalStateException("UVC 会话已结束，请重新连接后加载模型");
+                            }
+                            String info = activeCamera.loadRifeModel(modelDirectory.getAbsolutePath());
+                            mainHandler.post(() -> {
+                                rifeModelLoading = false;
+                                rifeModelReady = true;
+                                rifeTestEnabled = false;
+                                rifeModelSummary = "RIFE 4.6 已加载 · " + info;
+                                rifeInferenceSummary = "推理测试：已就绪，尚未开始";
+                                lastRifeProcessedCount = 0L;
+                                lastRifeSampleElapsedMs = 0L;
+                                if (rifeStatusView != null) {
+                                    rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
+                                }
+                                if (rifeModelButton != null) {
+                                    rifeModelButton.setText("RIFE 4.6 已加载");
+                                    rifeModelButton.setEnabled(false);
+                                }
+                                if (rifeTestButton != null) {
+                                    rifeTestButton.setEnabled(true);
+                                    rifeTestButton.setText("启动 1080P / 90 FPS 推理测试");
+                                }
+                                showStatus("RIFE 4.6 Vulkan 初始化完成。当前显示画面仍为原始 50 FPS。");
+                            });
+                        } catch (Exception e) {
+                            mainHandler.post(() -> {
+                                rifeModelLoading = false;
+                                rifeModelReady = false;
+                                rifeModelSummary = "RIFE 初始化失败：" + e.getClass().getSimpleName()
+                                        + " / " + (e.getMessage() == null ? "无详细信息" : e.getMessage());
+                                if (rifeStatusView != null) rifeStatusView.setText(rifeModelSummary);
+                                if (rifeModelButton != null) rifeModelButton.setEnabled(previewRunning);
+                                showStatus("RIFE 初始化失败：" + e.getClass().getSimpleName());
+                            });
+                        }
+                    });
+                } catch (Exception e) {
+                    mainHandler.post(() -> {
+                        rifeModelLoading = false;
+                        rifeModelSummary = "RIFE 模型下载失败：" + e.getClass().getSimpleName()
+                                + " / " + (e.getMessage() == null ? "无详细信息" : e.getMessage());
+                        if (rifeStatusView != null) rifeStatusView.setText(rifeModelSummary);
+                        if (rifeModelButton != null) rifeModelButton.setEnabled(previewRunning);
+                        showStatus("RIFE 模型下载或校验失败：" + e.getClass().getSimpleName());
+                    });
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            rifeModelLoading = false;
+            if (rifeModelButton != null) rifeModelButton.setEnabled(previewRunning);
+            showStatus("RIFE 下载任务未能启动。");
+        }
+    }
+
+    private void toggleRifeInferenceTest() {
+        if (!rifeModelReady || !previewRunning || executorShutdown) {
+            showStatus("请先连接 UVC 并完成 RIFE 4.6 模型初始化。");
+            return;
+        }
+        final boolean enabled = !rifeTestEnabled;
+        try {
+            cameraExecutor.execute(() -> {
+                try {
+                    UvcCamera activeCamera = camera;
+                    if (activeCamera == null) throw new IllegalStateException("UVC 会话已结束");
+                    activeCamera.setRifeInferenceEnabled(enabled);
+                    long[] baselineStats = activeCamera.rifeInferenceStats();
+                    long baselineProcessed = baselineStats != null && baselineStats.length >= 2
+                            ? baselineStats[1] : 0L;
+                    mainHandler.post(() -> {
+                        rifeTestEnabled = enabled;
+                        rifeInferenceSummary = enabled
+                                ? "推理测试运行中：1080P · 每 5 个输入间隔处理 4 个 · 目标约 40 次/秒"
+                                : "推理测试已停止；显示画面未被修改";
+                        if (rifeTestButton != null) {
+                            rifeTestButton.setText(enabled
+                                    ? "停止 RIFE 推理测试" : "启动 1080P / 90 FPS 推理测试");
+                        }
+                        if (rifeStatusView != null) {
+                            rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
+                        }
+                        lastRifeProcessedCount = baselineProcessed;
+                        lastRifeSampleElapsedMs = android.os.SystemClock.elapsedRealtime();
+                        recentRifeInferenceFps = 0.0;
+                        showStatus(enabled
+                                ? "已启动 RIFE 1080P 推理测试；当前 Surface 仍显示原始视频。"
+                                : "已停止 RIFE 推理测试。");
+                    });
+                } catch (Exception e) {
+                    mainHandler.post(() -> showStatus("RIFE 测试切换失败：" + e.getClass().getSimpleName()));
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            showStatus("RIFE 设置任务未能启动。");
+        }
+    }
+
     private void requestNativePerformanceStats() {
         if (nativePerfReadPending || executorShutdown || !previewRunning) return;
         nativePerfReadPending = true;
         try {
             cameraExecutor.execute(() -> {
                 String summary = "原生阶段耗时：暂不可用";
+                String rifeSummary = rifeModelReady ? "RIFE 推理：等待统计" : "RIFE 推理：模型未加载";
                 try {
                     UvcCamera activeCamera = camera;
                     if (activeCamera != null) {
@@ -884,19 +1057,43 @@ public class MainActivity extends Activity {
                                     stats[7] / frames / 1_000_000.0,
                                     stats[4] / 1_000_000.0);
                         }
+                        if (rifeModelReady) {
+                            long[] rs = activeCamera.rifeInferenceStats();
+                            if (rs != null && rs.length >= 9) {
+                                long now = android.os.SystemClock.elapsedRealtime();
+                                if (rifeTestEnabled && lastRifeSampleElapsedMs > 0 && now > lastRifeSampleElapsedMs) {
+                                    recentRifeInferenceFps = Math.max(0.0,
+                                            (rs[1] - lastRifeProcessedCount) * 1000.0 / (now - lastRifeSampleElapsedMs));
+                                }
+                                lastRifeProcessedCount = rs[1];
+                                lastRifeSampleElapsedMs = now;
+                                double avgMs = rs[1] > 0 ? rs[4] / rs[1] / 1_000_000.0 : 0.0;
+                                double copyAvgMs = rs[0] > 0 ? rs[6] / rs[0] / 1_000_000.0 : 0.0;
+                                rifeSummary = String.format(Locale.US,
+                                        "RIFE 推理：%.1f 次/秒（目标 40）· 成功 %d · 跳过 %d · 丢弃 %d\\n推理均值 %.2f ms / 峰值 %.2f ms · RGB复制均值 %.2f ms / 峰值 %.2f ms",
+                                        recentRifeInferenceFps, rs[1], rs[2], rs[3],
+                                        avgMs, rs[5] / 1_000_000.0, copyAvgMs, rs[7] / 1_000_000.0);
+                            }
+                        }
                     }
                 } catch (Exception e) {
                     summary = "原生阶段耗时读取失败：" + e.getClass().getSimpleName();
                 }
                 final String result = summary;
+                final String finalRifeSummary = rifeSummary;
                 mainHandler.post(() -> {
                     nativePerfReadPending = false;
                     nativePerfSummary = result;
+                    rifeInferenceSummary = finalRifeSummary;
+                    if (rifeStatusView != null && rifeModelReady) {
+                        rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
+                    }
                     RawUvcFramePipeline pipeline = rawFramePipeline;
                     if (pipelineStatusView != null && previewRunning) {
                         pipelineStatusView.setText((pipeline == null
                                 ? "实时 UVC 状态：等待视频帧" : pipeline.getDetailedReport())
-                                + "\n" + nativePerfSummary);
+                                + "\n" + nativePerfSummary
+                        + "\n" + rifeInferenceSummary);
                     }
                 });
             });
@@ -922,7 +1119,8 @@ public class MainActivity extends Activity {
             if (pipelineStatusView != null && previewRunning) {
                 pipelineStatusView.setText((pipeline == null
                         ? "实时 UVC 状态：等待视频帧" : pipeline.getDetailedReport())
-                        + "\n" + nativePerfSummary);
+                        + "\n" + nativePerfSummary
+                        + "\n" + rifeInferenceSummary);
             }
             requestNativePerformanceStats();
         }
@@ -978,6 +1176,22 @@ public class MainActivity extends Activity {
         usbConnection = null;
         streamSurface = null;
         rawFramePipeline = null;
+        rifeModelReady = false;
+        rifeTestEnabled = false;
+        rifeModelLoading = false;
+        rifeModelSummary = "RIFE 4.6：UVC 会话已结束，需要重新初始化";
+        rifeInferenceSummary = "RIFE 推理：未运行";
+        mainHandler.post(() -> {
+            if (rifeModelButton != null) {
+                rifeModelButton.setEnabled(false);
+                rifeModelButton.setText("下载并初始化 RIFE 4.6");
+            }
+            if (rifeTestButton != null) {
+                rifeTestButton.setEnabled(false);
+                rifeTestButton.setText("启动 1080P / 90 FPS 推理测试");
+            }
+            if (rifeStatusView != null) rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
+        });
         closeLocalResources(oldCamera, oldConnection, oldSurface, oldRawPipeline);
     }
 
@@ -986,6 +1200,10 @@ public class MainActivity extends Activity {
                                      Surface oldSurface,
                                      RawUvcFramePipeline oldRawPipeline) {
         if (oldCamera != null) {
+            try {
+                oldCamera.setRifeInferenceEnabled(false);
+            } catch (Exception ignored) {
+            }
             try {
                 oldCamera.setRawFrameListener(null);
             } catch (Exception ignored) {
@@ -1046,6 +1264,7 @@ public class MainActivity extends Activity {
         invalidateAndCloseSession();
         executorShutdown = true;
         cameraExecutor.shutdown();
+        rifeDownloadExecutor.shutdownNow();
         super.onDestroy();
     }
 

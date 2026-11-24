@@ -1,10 +1,10 @@
-# ITX Display v0.5.8
+# ITX Display v0.6.0
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.5.8 (versionCode 19)
+- Application version: 0.6.0 (versionCode 20)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - Native ABI: arm64-v8a only (Snapdragon 870 / ARM64 target)
@@ -261,3 +261,13 @@ A 50 FPS report showed 1,284 callbacks and 1,284 analyzed frames with zero app-s
 - Added maximum libuvc frame-completion interval and cumulative interval counts above 30, 40 and 60 ms for both callback-arrival and libuvc completion timestamps. This helps distinguish occasional callback scheduling spikes from broader frame-delivery jitter.
 - Added app version/versionCode to the copied UVC diagnostic report so reports can be associated with the APK that produced them.
 - Added the native decode/blit timing summary to the copied report, alongside the existing UVC queue and timing metrics.
+
+
+## v0.6.0 RIFE 4.6 Vulkan throughput experiment
+
+- Added pinned RIFE ncnn Vulkan and ncnn source dependencies for ARM64 Android builds, using the Android system Vulkan loader and the already-tested Adreno 650 compute path.
+- Added an explicit user-triggered download of the RIFE 4.6 model into app-private storage. Both model files are checked for exact size and Git blob SHA-1 before they are passed to native code.
+- Added a native RIFE 4.6 Vulkan engine with a three-slot RGB frame pool and a bounded latest-frame queue. The worker processes four of every five consecutive 50 FPS input intervals (40 generated-frame inference attempts per second, approximately 90 FPS total target) and skips one interval in five.
+- Added inference and RGB-copy timing, throughput, skip and drop counters to the diagnostic report.
+- **This release is a throughput-validation build only.** RIFE output is currently measured and discarded; the existing UVC Surface path still displays original frames at the input frame rate. Model loading and inference remain off by default. No claim is made that Adreno 650 can sustain 1080p90 until the device test confirms it.
+- The RIFE and ncnn source projects retain their upstream licenses; review the included upstream license files before redistributing.
