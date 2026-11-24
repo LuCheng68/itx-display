@@ -429,6 +429,10 @@ Java_com_mikimn_droiduvc_NativeUvc_start(JNIEnv *env, jobject, jlong handle,
         std::lock_guard<std::mutex> lock(cam->mutex);
         cam->window = window;
         cam->glesRenderer = std::move(renderer);
+        if (cam->glesRenderer) {
+            cam->glesRenderer->setRgbExperimentCompensation(
+                    cam->rgbExperimentCompensation.load(std::memory_order_relaxed));
+        }
     }
 
     err = uvc_start_streaming(cam->devh, &ctrl, onFrame, cam, 0);
@@ -636,7 +640,10 @@ Java_com_mikimn_droiduvc_NativeUvc_setRgbExperimentCompensation(
         JNIEnv *, jobject, jlong handle, jboolean enabled) {
     auto *cam = reinterpret_cast<Camera *>(handle);
     if (cam != nullptr) {
-        cam->rgbExperimentCompensation.store(enabled == JNI_TRUE, std::memory_order_relaxed);
+        const bool value = enabled == JNI_TRUE;
+        cam->rgbExperimentCompensation.store(value, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lock(cam->mutex);
+        if (cam->glesRenderer) cam->glesRenderer->setRgbExperimentCompensation(value);
     }
 }
 
@@ -658,7 +665,7 @@ Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong 
     auto *cam = reinterpret_cast<Camera *>(handle);
     if (cam == nullptr) return nullptr;
     std::lock_guard<std::mutex> lock(cam->mutex);
-    jlong values[23] = {
+    jlong values[24] = {
             static_cast<jlong>(cam->frameCount),
             static_cast<jlong>(cam->observerTotalNs),
             static_cast<jlong>(cam->observerMaxNs),
@@ -668,7 +675,7 @@ Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong 
             static_cast<jlong>(cam->blitMaxNs),
             static_cast<jlong>(cam->totalFrameNs),
             static_cast<jlong>(cam->totalFrameMaxNs),
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     // 0 = CPU fallback, 1 = GLES renderer active, 2 = GLES renderer stopped/failed.
     if (cam->glesRenderer) {
@@ -678,8 +685,8 @@ Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong 
             values[10 + i] = static_cast<jlong>(gpu[i]);
         }
     }
-    jlongArray result = env->NewLongArray(23);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 23, values);
+    jlongArray result = env->NewLongArray(24);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 24, values);
     return result;
 }
 
