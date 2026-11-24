@@ -829,7 +829,7 @@ public class MainActivity extends Activity {
                     if (pipelineStatusView != null && previewRunning) {
                         pipelineStatusView.setText((pipeline == null
                                 ? "实时 UVC 状态：等待视频帧" : pipeline.getDetailedReport())
-                                + "\\n" + nativePerfSummary);
+                                + "\n" + nativePerfSummary);
                     }
                 });
             });
@@ -855,7 +855,7 @@ public class MainActivity extends Activity {
             if (pipelineStatusView != null && previewRunning) {
                 pipelineStatusView.setText((pipeline == null
                         ? "实时 UVC 状态：等待视频帧" : pipeline.getDetailedReport())
-                        + "\\n" + nativePerfSummary);
+                        + "\n" + nativePerfSummary);
             }
             requestNativePerformanceStats();
         }

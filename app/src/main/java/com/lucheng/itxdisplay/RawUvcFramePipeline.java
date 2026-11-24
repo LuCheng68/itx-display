@@ -228,7 +228,10 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
                 + "\n序号缺口估计：" + sequenceGapCount.get()
                 + "\n最近序号：" + latestSequence
                 + "\nUVC format code：" + latestFormatCode
-                + "\n平均压缩帧大小：" + String.format(Locale.US, "%.1f KB", averageFrameBytes / 1024.0);
+                + "\n平均压缩帧大小：" + String.format(Locale.US, "%.1f KB", averageFrameBytes / 1024.0)
+                + "\nUVC 回调线程 TID：" + callbackTid
+                + "\n分析线程 TID：" + analyzerTid
+                + "\n灰阶探测：" + grayProbeResult;
     }
 
     /**
