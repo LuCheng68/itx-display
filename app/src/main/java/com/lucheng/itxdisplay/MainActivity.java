@@ -1056,6 +1056,9 @@ public class MainActivity extends Activity {
                                     ? "关闭 FSR1 RCAS（原生 1080P 锐化）"
                                     : "开启 FSR1 RCAS（原生 1080P 锐化）");
                         }
+                        if (rifeTestButton != null) {
+                            rifeTestButton.setEnabled(!fsrEnabled && rifeModelReady);
+                        }
                         showStatus(fsrEnabled
                                 ? "FSR1 RCAS 已启用：当前仅处理原生 1920×1080 输入，锐化强度为保守档。"
                                 : "FSR1 RCAS 已关闭：恢复未锐化的 GLES 直通画面。");
@@ -1074,6 +1077,10 @@ public class MainActivity extends Activity {
     }
 
     private void toggleRifeInferenceTest() {
+        if (fsrEnabled) {
+            showStatus("FSR1 RCAS 正在运行，请先关闭 FSR 再启动 RIFE 推理测试。");
+            return;
+        }
         if (!rifeModelReady || !previewRunning || executorShutdown) {
             showStatus("请先连接 UVC 并完成 RIFE 4.6 模型初始化。");
             return;
