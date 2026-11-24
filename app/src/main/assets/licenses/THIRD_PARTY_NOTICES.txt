@@ -1148,3 +1148,19 @@ NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ** IN THE MATERIALS.
 */
 
+
+
+===============================================================================
+AMD FidelityFX Super Resolution 1 shader source
+===============================================================================
+
+Files:
+- libraries/droiduvc/src/main/cpp/fsr_vendor/ffx_a.h
+- libraries/droiduvc/src/main/cpp/fsr_vendor/ffx_fsr1.h
+
+Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+Used under the MIT license. The complete license text is included at
+libraries/droiduvc/src/main/cpp/fsr_vendor/LICENSE.txt and the original
+copyright/license notices are retained in both vendored source headers.
+
+Upstream: https://github.com/GPUOpen-Effects/FidelityFX-FSR
