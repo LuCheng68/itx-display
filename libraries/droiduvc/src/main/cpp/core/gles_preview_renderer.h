@@ -6,6 +6,7 @@
 #include <GLES3/gl3.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -77,12 +78,29 @@ public:
         }
         frameWidth_ = width;
         frameHeight_ = height;
+        if (hasFrame_) replacedFrames_.fetch_add(1, std::memory_order_relaxed);
         hasFrame_ = true; // Replacing the pending frame bounds queue depth to one.
+        submittedFrames_.fetch_add(1, std::memory_order_relaxed);
         frameCv_.notify_one();
         return true;
     }
 
     bool active() const { return active_.load(std::memory_order_acquire); }
+
+    // {submitted, rendered, replaced, uploadTotalNs, uploadMaxNs,
+    //  drawAndPresentTotalNs, drawAndPresentMaxNs, lastError}
+    std::array<uint64_t, 8> stats() const {
+        return {
+                submittedFrames_.load(std::memory_order_relaxed),
+                renderedFrames_.load(std::memory_order_relaxed),
+                replacedFrames_.load(std::memory_order_relaxed),
+                uploadTotalNs_.load(std::memory_order_relaxed),
+                uploadMaxNs_.load(std::memory_order_relaxed),
+                renderTotalNs_.load(std::memory_order_relaxed),
+                renderMaxNs_.load(std::memory_order_relaxed),
+                static_cast<uint64_t>(lastError_.load(std::memory_order_relaxed))
+        };
+    }
 
     void stop() {
         {
@@ -194,8 +212,11 @@ private:
         return glGetError() == GL_NO_ERROR;
     }
 
-    void render(const std::vector<uint8_t> &pixels, int width, int height) {
-        if (pixels.empty() || width <= 0 || height <= 0) return;
+    bool render(const std::vector<uint8_t> &pixels, int width, int height) {
+        using Clock = std::chrono::steady_clock;
+        if (pixels.empty() || width <= 0 || height <= 0) return false;
+
+        const auto uploadStart = Clock::now();
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glBindTexture(GL_TEXTURE_2D, texture_);
         if (width != textureWidth_ || height != textureHeight_) {
@@ -207,12 +228,20 @@ private:
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
                             GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
         }
+        const uint64_t uploadNs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - uploadStart).count());
+        uploadTotalNs_.fetch_add(uploadNs, std::memory_order_relaxed);
+        updateMax(uploadMaxNs_, uploadNs);
 
         EGLint outputWidth = 0, outputHeight = 0;
-        eglQuerySurface(display_, surface_, EGL_WIDTH, &outputWidth);
-        eglQuerySurface(display_, surface_, EGL_HEIGHT, &outputHeight);
-        if (outputWidth <= 0 || outputHeight <= 0) return;
+        if (!eglQuerySurface(display_, surface_, EGL_WIDTH, &outputWidth) ||
+            !eglQuerySurface(display_, surface_, EGL_HEIGHT, &outputHeight) ||
+            outputWidth <= 0 || outputHeight <= 0) {
+            lastError_.store(static_cast<int>(eglGetError()), std::memory_order_relaxed);
+            return false;
+        }
 
+        const auto renderStart = Clock::now();
         glViewport(0, 0, outputWidth, outputHeight);
         glClearColor(0.f, 0.f, 0.f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -230,7 +259,28 @@ private:
         glUniform1i(glGetUniformLocation(program_, "uTexture"), 0);
         glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        eglSwapBuffers(display_, surface_);
+
+        const GLenum glError = glGetError();
+        const EGLBoolean swapped = eglSwapBuffers(display_, surface_);
+        const EGLint eglError = swapped ? EGL_SUCCESS : eglGetError();
+        const uint64_t renderNs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - renderStart).count());
+        if (glError != GL_NO_ERROR || !swapped) {
+            lastError_.store(glError != GL_NO_ERROR ? static_cast<int>(glError)
+                                                    : static_cast<int>(eglError),
+                             std::memory_order_relaxed);
+            return false;
+        }
+        renderTotalNs_.fetch_add(renderNs, std::memory_order_relaxed);
+        updateMax(renderMaxNs_, renderNs);
+        renderedFrames_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
+    static void updateMax(std::atomic<uint64_t> &target, uint64_t value) {
+        uint64_t current = target.load(std::memory_order_relaxed);
+        while (current < value &&
+               !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {}
     }
 
     void cleanupEgl() {
@@ -271,7 +321,7 @@ private:
                     height = frameHeight_;
                     hasFrame_ = false;
                 }
-                render(renderBuffer_, width, height);
+                const bool rendered = render(renderBuffer_, width, height);
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
                     // Recycle the completed buffer without overwriting a newer
@@ -279,7 +329,7 @@ private:
                     if (frame_.empty()) frame_.swap(renderBuffer_);
                     else if (spare_.empty()) spare_.swap(renderBuffer_);
                 }
-                if (eglGetError() != EGL_SUCCESS) break;
+                if (!rendered) break;
             }
         }
         cleanupEgl();
@@ -309,6 +359,14 @@ private:
     bool initialized_ = false;
     bool initOk_ = false;
     std::atomic<bool> active_{false};
+    std::atomic<uint64_t> submittedFrames_{0};
+    std::atomic<uint64_t> renderedFrames_{0};
+    std::atomic<uint64_t> replacedFrames_{0};
+    std::atomic<uint64_t> uploadTotalNs_{0};
+    std::atomic<uint64_t> uploadMaxNs_{0};
+    std::atomic<uint64_t> renderTotalNs_{0};
+    std::atomic<uint64_t> renderMaxNs_{0};
+    std::atomic<int> lastError_{0};
 
     EGLDisplay display_ = EGL_NO_DISPLAY;
     EGLSurface surface_ = EGL_NO_SURFACE;
