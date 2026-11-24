@@ -1,6 +1,6 @@
 # ITX Display FSR 1 implementation plan
 
-Status: Phase A GLES pass-through has been confirmed on the Xiaomi Pad 5 Pro / Adreno 650. Phase B has an initial, opt-in AMD FSR1 RCAS fragment pass for native 1920x1080 input. The RCAS shader, UI toggle and timing counters are committed, but the new code still requires an Android build and device validation. EASU 720p-to-1080p is not yet implemented.
+Status: Phase A GLES pass-through has been confirmed on the Xiaomi Pad 5 Pro / Adreno 650. Phase B has an initial, opt-in AMD FSR1 RCAS fragment pass for native 1920x1080 input. A v0.6.3 device report showed RCAS shader unavailable. Code inspection found malformed escaped newlines in the GLSL source prefix; v0.6.4 corrects these and adds shader-stage error codes. The RGB experiment LUT is also now applied in the GLES path (and before RCAS when both are enabled). These fixes still require an Android build and device validation. EASU 720p-to-1080p is not yet implemented.
 
 ## User-selected scope
 
@@ -50,8 +50,10 @@ The first FSR integration therefore needs a separate GPU-backed renderer rather 
 ### Phase B - FSR 1 shaders
 - [x] Vendor the official AMD `ffx_a.h`, `ffx_fsr1.h` and MIT license; embed the headers into runtime GLSL source so no non-standard shader include extension is required.
 - [x] Add an opt-in, native-1080p RCAS fragment pass behind a UI toggle. Default remains off; initial sharpening attenuation is conservative (2.5 stops).
+- [x] Apply the same 256-entry RGB experiment LUT in the GLES pass-through shader, and in the RCAS input callback when both features are enabled.
+- [x] Correct the malformed escaped-newline GLSL prefix found after v0.6.3 testing; expose shader stage error codes (fragment compile=1, vertex compile=2, link=3, output FBO=4) and Logcat compile logs.
 - [x] Add RCAS availability, applied-frame and CPU draw-call timing diagnostics. The CPU draw-call timing is not a GPU hardware timer.
-- [ ] Build and device-test the RCAS shader on Adreno 650; compare fine text, grayscale ramps, edges and MJPEG ringing with FSR off/on.
+- [ ] Build v0.6.4 and device-test the RCAS shader on Adreno 650; compare RGB correction on/off, fine text, grayscale ramps, edges and MJPEG ringing with FSR off/on.
 - [ ] Implement EASU for 1280x720 -> 1920x1080, followed by RCAS. Native 1920x1080 should skip EASU and run RCAS only.
 - [ ] Add a real user-adjustable conservative sharpening attenuation control after the initial visual quality test.
 - [ ] Validate shader output against AMD reference images/test vectors before enabling it for live preview.
