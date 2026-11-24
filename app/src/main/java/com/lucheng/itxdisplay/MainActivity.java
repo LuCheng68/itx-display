@@ -69,11 +69,13 @@ public class MainActivity extends Activity {
     private Button colorReadButton;
     private Button copyDiagnosticsButton;
     private Button grayProbeButton;
+    private Button rgbExperimentButton;
     private Button infoToggle;
     private volatile String baseDiagnosticsReport = "尚未连接 UVC 设备。";
     private volatile String diagnosticsReport = "尚未连接 UVC 设备。";
     private volatile boolean readingColorControls = false;
     private volatile RawUvcFramePipeline rawFramePipeline;
+    private volatile boolean rgbExperimentEnabled = false;
     private volatile boolean nativePerfReadPending = false;
     private volatile String nativePerfSummary = "原生阶段耗时：等待统计";
     private boolean videoInfoVisible = false;
@@ -255,6 +257,21 @@ public class MainActivity extends Activity {
         pipelineStatusView.setTextSize(11);
         pipelineStatusView.setPadding(0, dp(4), 0, dp(8));
         panelContent.addView(pipelineStatusView);
+
+        TextView rgbExperimentHint = new TextView(this);
+        rgbExperimentHint.setText("RGB 输入实验曲线：仅在电脑显卡设为 RGB 时测试；不会恢复已剪切的 240/255 细节。");
+        rgbExperimentHint.setTextColor(0xFFFFD18A);
+        rgbExperimentHint.setTextSize(11);
+        rgbExperimentHint.setPadding(0, dp(4), 0, dp(2));
+        panelContent.addView(rgbExperimentHint);
+
+        rgbExperimentButton = new Button(this);
+        rgbExperimentButton.setText("RGB 实验校正：关闭");
+        rgbExperimentButton.setTextSize(12);
+        rgbExperimentButton.setAllCaps(false);
+        rgbExperimentButton.setOnClickListener(v -> toggleRgbExperimentCompensation());
+        panelContent.addView(rgbExperimentButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView target = new TextView(this);
         target.setText("目标：1920×1080 · 50 FPS · MJPEG 优先 · 无音频");
@@ -488,10 +505,12 @@ public class MainActivity extends Activity {
                 // The observer only copies into a bounded queue; parsing runs on its own worker.
                 newRawPipeline = new RawUvcFramePipeline();
                 newCamera.setRawFrameListener(newRawPipeline);
+                newCamera.setRgbExperimentCompensation(rgbExperimentEnabled);
 
                 // Request 1080p50 and prefer MJPEG. The returned mode is the actual negotiated mode.
                 StreamMode actual = newCamera.start(
                         surface, TARGET_WIDTH, TARGET_HEIGHT, TARGET_FPS, StreamFormat.MJPEG);
+                newCamera.setRgbExperimentCompensation(rgbExperimentEnabled);
 
                 if (token != sessionGeneration || !activityResumed || !surface.isValid()) {
                     closeLocalResources(newCamera, newConnection, surface, newRawPipeline);
@@ -782,6 +801,36 @@ public class MainActivity extends Activity {
 
         // No texture scaling matrix: the view itself now has the video aspect ratio.
         previewView.setTransform(null);
+    }
+
+    private void toggleRgbExperimentCompensation() {
+        final boolean enabled = !rgbExperimentEnabled;
+        rgbExperimentEnabled = enabled;
+        if (rgbExperimentButton != null) {
+            rgbExperimentButton.setText(enabled
+                    ? "RGB 实验校正：开启（测试）" : "RGB 实验校正：关闭");
+        }
+        if (!previewRunning && !opening) {
+            showStatus(enabled ? "已选择 RGB 实验曲线；下次连接时生效。"
+                    : "已关闭 RGB 实验曲线；下次连接时生效。");
+            return;
+        }
+        if (executorShutdown) return;
+        try {
+            cameraExecutor.execute(() -> {
+                try {
+                    UvcCamera activeCamera = camera;
+                    if (activeCamera != null) activeCamera.setRgbExperimentCompensation(enabled);
+                    mainHandler.post(() -> showStatus(enabled
+                            ? "已启用 RGB 实验曲线；可随时关闭恢复原始显示。"
+                            : "已关闭 RGB 实验曲线，恢复原始显示。"));
+                } catch (Exception e) {
+                    mainHandler.post(() -> showStatus("RGB 实验曲线切换失败：" + e.getClass().getSimpleName()));
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            showStatus("设置任务未能启动；选择将在下次连接时应用。");
+        }
     }
 
     private void requestGrayPatchProbe() {

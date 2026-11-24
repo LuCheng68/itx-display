@@ -15,6 +15,7 @@ internal interface UvcNative {
     fun listModes(handle: Long): IntArray
     fun start(handle: Long, surface: Surface, width: Int, height: Int, fps: Int, preferredFormat: Int): IntArray
     fun setRawFrameListener(handle: Long, listener: RawFrameListener?)
+    fun setRgbExperimentCompensation(handle: Long, enabled: Boolean)
     fun performanceStats(handle: Long): LongArray
     fun stop(handle: Long)
     fun close(handle: Long)
@@ -45,6 +46,7 @@ internal object NativeUvc : UvcNative {
     external override fun listModes(handle: Long): IntArray
     external override fun start(handle: Long, surface: Surface, width: Int, height: Int, fps: Int, preferredFormat: Int): IntArray
     external override fun setRawFrameListener(handle: Long, listener: RawFrameListener?)
+    external override fun setRgbExperimentCompensation(handle: Long, enabled: Boolean)
     external override fun performanceStats(handle: Long): LongArray
     external override fun stop(handle: Long)
     external override fun close(handle: Long)

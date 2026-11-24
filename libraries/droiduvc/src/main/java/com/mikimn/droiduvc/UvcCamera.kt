@@ -122,6 +122,13 @@ class UvcCamera internal constructor(private val native: UvcNative, private var 
      * thread. Its direct ByteBuffer is valid only for the duration of onFrame(); implementations
      * must copy immediately, return quickly and must not call back into this camera.
      */
+    /** Toggles ITX Display's optional display-only RGB grayscale experiment. */
+    @Synchronized
+    fun setRgbExperimentCompensation(enabled: Boolean) {
+        check(handle != 0L) { "Camera is closed" }
+        native.setRgbExperimentCompensation(handle, enabled)
+    }
+
     @Synchronized
     fun setRawFrameListener(listener: RawFrameListener?) {
         check(handle != 0L) { "Camera is closed" }

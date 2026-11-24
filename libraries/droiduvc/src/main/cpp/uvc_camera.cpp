@@ -10,6 +10,7 @@
 #include "stream_mode.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -46,6 +47,7 @@ struct Camera {
     uint64_t blitMaxNs = 0;
     uint64_t totalFrameNs = 0;
     uint64_t totalFrameMaxNs = 0;
+    std::atomic<bool> rgbExperimentCompensation{false};
     std::mutex mutex;
 };
 
@@ -252,7 +254,8 @@ void onFrame(uvc_frame_t *frame, void *user) {
 
     droiduvc::blitRgbToRgbx(static_cast<const uint8_t *>(cam->rgb->data), cam->rgb->step,
                             cam->rgb->width, cam->rgb->height, static_cast<uint8_t *>(buf.bits),
-                            static_cast<size_t>(buf.stride) * 4, buf.width, buf.height);
+                            static_cast<size_t>(buf.stride) * 4, buf.width, buf.height,
+                            cam->rgbExperimentCompensation.load(std::memory_order_relaxed));
     ANativeWindow_unlockAndPost(cam->window);
 
     const uint64_t blitNs = static_cast<uint64_t>(
@@ -511,6 +514,15 @@ Java_com_mikimn_droiduvc_NativeUvc_deviceStrings(JNIEnv *env, jobject, jlong han
         }
     }
     return result;
+}
+
+JNIEXPORT void JNICALL
+Java_com_mikimn_droiduvc_NativeUvc_setRgbExperimentCompensation(
+        JNIEnv *, jobject, jlong handle, jboolean enabled) {
+    auto *cam = reinterpret_cast<Camera *>(handle);
+    if (cam != nullptr) {
+        cam->rgbExperimentCompensation.store(enabled == JNI_TRUE, std::memory_order_relaxed);
+    }
 }
 
 JNIEXPORT jlongArray JNICALL
