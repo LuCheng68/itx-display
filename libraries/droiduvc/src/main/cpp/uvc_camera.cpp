@@ -640,12 +640,25 @@ Java_com_mikimn_droiduvc_NativeUvc_setRgbExperimentCompensation(
     }
 }
 
+JNIEXPORT void JNICALL
+Java_com_mikimn_droiduvc_NativeUvc_setFsrEnabled(
+        JNIEnv *, jobject, jlong handle, jboolean enabled) {
+    auto *cam = reinterpret_cast<Camera *>(handle);
+    if (cam == nullptr) return;
+    std::lock_guard<std::mutex> lock(cam->mutex);
+    if (!cam->glesRenderer) return;
+    const bool accepted = cam->glesRenderer->setFsrEnabled(enabled == JNI_TRUE);
+    if (enabled == JNI_TRUE && !accepted) {
+        LOGE("FSR1 RCAS is unavailable; retaining the unsharpened GLES preview");
+    }
+}
+
 JNIEXPORT jlongArray JNICALL
 Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong handle) {
     auto *cam = reinterpret_cast<Camera *>(handle);
     if (cam == nullptr) return nullptr;
     std::lock_guard<std::mutex> lock(cam->mutex);
-    jlong values[18] = {
+    jlong values[23] = {
             static_cast<jlong>(cam->frameCount),
             static_cast<jlong>(cam->observerTotalNs),
             static_cast<jlong>(cam->observerMaxNs),
@@ -655,7 +668,7 @@ Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong 
             static_cast<jlong>(cam->blitMaxNs),
             static_cast<jlong>(cam->totalFrameNs),
             static_cast<jlong>(cam->totalFrameMaxNs),
-            0, 0, 0, 0, 0, 0, 0, 0, 0
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     // 0 = CPU fallback, 1 = GLES renderer active, 2 = GLES renderer stopped/failed.
     if (cam->glesRenderer) {
@@ -665,8 +678,8 @@ Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong 
             values[10 + i] = static_cast<jlong>(gpu[i]);
         }
     }
-    jlongArray result = env->NewLongArray(18);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 18, values);
+    jlongArray result = env->NewLongArray(23);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 23, values);
     return result;
 }
 
