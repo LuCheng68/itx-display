@@ -4,6 +4,8 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
+#include <android/log.h>
+#include "fsr_shader_sources.h"
 
 #include <algorithm>
 #include <array>
@@ -86,10 +88,16 @@ public:
     }
 
     bool active() const { return active_.load(std::memory_order_acquire); }
+    bool setFsrEnabled(bool enabled) {
+        if (enabled && !fsrAvailable_.load(std::memory_order_acquire)) return false;
+        fsrEnabled_.store(enabled, std::memory_order_release);
+        return true;
+    }
 
     // {submitted, rendered, replaced, uploadTotalNs, uploadMaxNs,
-    //  drawAndPresentTotalNs, drawAndPresentMaxNs, lastError}
-    std::array<uint64_t, 8> stats() const {
+    //  drawAndPresentTotalNs, drawAndPresentMaxNs, lastError,
+    //  fsrAppliedFrames, fsrDrawCallTotalNs, fsrDrawCallMaxNs, fsrAvailable}
+    std::array<uint64_t, 12> stats() const {
         return {
                 submittedFrames_.load(std::memory_order_relaxed),
                 renderedFrames_.load(std::memory_order_relaxed),
@@ -98,7 +106,11 @@ public:
                 uploadMaxNs_.load(std::memory_order_relaxed),
                 renderTotalNs_.load(std::memory_order_relaxed),
                 renderMaxNs_.load(std::memory_order_relaxed),
-                static_cast<uint64_t>(lastError_.load(std::memory_order_relaxed))
+                static_cast<uint64_t>(lastError_.load(std::memory_order_relaxed)),
+                fsrAppliedFrames_.load(std::memory_order_relaxed),
+                fsrDrawCallTotalNs_.load(std::memory_order_relaxed),
+                fsrDrawCallMaxNs_.load(std::memory_order_relaxed),
+                fsrAvailable_.load(std::memory_order_relaxed) ? 1u : 0u
         };
     }
 
@@ -160,6 +172,89 @@ private:
         return program;
     }
 
+    GLuint createRcasProgram() {
+        static const char *prefix =
+                "#version 300 es\\n"
+                "precision highp float;\\n"
+                "precision highp int;\\n"
+                "#define A_GPU 1\\n"
+                "#define A_GLSL 1\\n"
+                "#define FSR_RCAS_F 1\\n";
+        static const char *body = R"ITXRCAS(
+uniform sampler2D uInputTexture;
+uniform float uSharpnessStops;
+
+AF4 FsrRcasLoadF(ASU2 p) {
+    ivec2 size = textureSize(uInputTexture, 0);
+    return texelFetch(uInputTexture, clamp(p, ivec2(0), size - ivec2(1)), 0);
+}
+void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {}
+
+layout(location=0) out vec4 fragColor;
+void main() {
+    AU2 pixel = AU2(gl_FragCoord.xy);
+    AU4 constants;
+    FsrRcasCon(constants, uSharpnessStops);
+    AF1 r, g, b;
+    FsrRcasF(r, g, b, pixel, constants);
+    fragColor = vec4(r, g, b, 1.0);
+}
+)ITXRCAS";
+        GLuint shader = glCreateShader(GL_FRAGMENT_SHADER);
+        const GLchar *parts[] = {prefix, kFfxPortabilityHeader, kFfxFsr1Header, body};
+        glShaderSource(shader, 4, parts, nullptr);
+        glCompileShader(shader);
+        GLint compiled = GL_FALSE;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+        if (!compiled) {
+            GLchar log[2048] = {};
+            glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+            __android_log_print(ANDROID_LOG_ERROR, "UvcGles", "FSR1 RCAS shader compile failed: %s", log);
+            glDeleteShader(shader);
+            return 0;
+        }
+        GLuint program = glCreateProgram();
+        glAttachShader(program, shader);
+        glLinkProgram(program);
+        glDeleteShader(shader);
+        GLint linked = GL_FALSE;
+        glGetProgramiv(program, GL_LINK_STATUS, &linked);
+        if (!linked) {
+            GLchar log[2048] = {};
+            glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+            __android_log_print(ANDROID_LOG_ERROR, "UvcGles", "FSR1 RCAS program link failed: %s", log);
+            glDeleteProgram(program);
+            return 0;
+        }
+        return program;
+    }
+
+    bool ensureRcasTarget(int width, int height) {
+        if (width == fsrTargetWidth_ && height == fsrTargetHeight_ &&
+            fsrFramebuffer_ != 0 && fsrTexture_ != 0) return true;
+        if (!fsrTexture_) glGenTextures(1, &fsrTexture_);
+        if (!fsrFramebuffer_) glGenFramebuffers(1, &fsrFramebuffer_);
+        glBindTexture(GL_TEXTURE_2D, fsrTexture_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindFramebuffer(GL_FRAMEBUFFER, fsrFramebuffer_);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, fsrTexture_, 0);
+        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            lastError_.store(static_cast<int>(status), std::memory_order_relaxed);
+            return false;
+        }
+        fsrTargetWidth_ = width;
+        fsrTargetHeight_ = height;
+        return true;
+    }
+
     bool initializeEgl() {
         display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         if (display_ == EGL_NO_DISPLAY || !eglInitialize(display_, nullptr, nullptr)) return false;
@@ -186,6 +281,8 @@ private:
 
         program_ = createProgram();
         if (!program_) return false;
+        rcasProgram_ = createRcasProgram();
+        fsrAvailable_.store(rcasProgram_ != 0, std::memory_order_release);
 
         static const GLfloat vertices[] = {
                 -1.f, -1.f, 0.f, 1.f,
@@ -241,6 +338,40 @@ private:
             return false;
         }
 
+        bool fsrApplied = false;
+        const auto fsrStart = Clock::now();
+        if (fsrEnabled_.load(std::memory_order_acquire) &&
+            width == 1920 && height == 1080 && rcasProgram_ != 0 &&
+            ensureRcasTarget(width, height)) {
+            glBindFramebuffer(GL_FRAMEBUFFER, fsrFramebuffer_);
+            glViewport(0, 0, width, height);
+            glUseProgram(rcasProgram_);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texture_);
+            glUniform1i(glGetUniformLocation(rcasProgram_, "uInputTexture"), 0);
+            // 2.5 stops is intentionally conservative for MJPEG input.
+            glUniform1f(glGetUniformLocation(rcasProgram_, "uSharpnessStops"), 2.5f);
+            glBindVertexArray(vao_);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            const GLenum fsrError = glGetError();
+            if (fsrError == GL_NO_ERROR) {
+                fsrApplied = true;
+            } else {
+                lastError_.store(static_cast<int>(fsrError), std::memory_order_relaxed);
+                fsrEnabled_.store(false, std::memory_order_release);
+                __android_log_print(ANDROID_LOG_ERROR, "UvcGles",
+                                    "FSR1 RCAS draw failed (GL error 0x%x); disabling RCAS", fsrError);
+            }
+            const uint64_t fsrNs = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - fsrStart).count());
+            if (fsrApplied) {
+                fsrAppliedFrames_.fetch_add(1, std::memory_order_relaxed);
+                fsrDrawCallTotalNs_.fetch_add(fsrNs, std::memory_order_relaxed);
+                updateMax(fsrDrawCallMaxNs_, fsrNs);
+            }
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
         const auto renderStart = Clock::now();
         glViewport(0, 0, outputWidth, outputHeight);
         glClearColor(0.f, 0.f, 0.f, 1.f);
@@ -255,7 +386,7 @@ private:
                    viewportWidth, viewportHeight);
         glUseProgram(program_);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, texture_);
+        glBindTexture(GL_TEXTURE_2D, fsrApplied ? fsrTexture_ : texture_);
         glUniform1i(glGetUniformLocation(program_, "uTexture"), 0);
         glBindVertexArray(vao_);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -290,6 +421,9 @@ private:
             if (vbo_) glDeleteBuffers(1, &vbo_);
             if (vao_) glDeleteVertexArrays(1, &vao_);
             if (program_) glDeleteProgram(program_);
+            if (rcasProgram_) glDeleteProgram(rcasProgram_);
+            if (fsrTexture_) glDeleteTextures(1, &fsrTexture_);
+            if (fsrFramebuffer_) glDeleteFramebuffers(1, &fsrFramebuffer_);
             if (surface_ != EGL_NO_SURFACE) eglDestroySurface(display_, surface_);
             if (context_ != EGL_NO_CONTEXT) eglDestroyContext(display_, context_);
             eglTerminate(display_);
@@ -367,6 +501,11 @@ private:
     std::atomic<uint64_t> renderTotalNs_{0};
     std::atomic<uint64_t> renderMaxNs_{0};
     std::atomic<int> lastError_{0};
+    std::atomic<bool> fsrEnabled_{false};
+    std::atomic<bool> fsrAvailable_{false};
+    std::atomic<uint64_t> fsrAppliedFrames_{0};
+    std::atomic<uint64_t> fsrDrawCallTotalNs_{0};
+    std::atomic<uint64_t> fsrDrawCallMaxNs_{0};
 
     EGLDisplay display_ = EGL_NO_DISPLAY;
     EGLSurface surface_ = EGL_NO_SURFACE;
@@ -375,8 +514,13 @@ private:
     GLuint vao_ = 0;
     GLuint vbo_ = 0;
     GLuint texture_ = 0;
+    GLuint rcasProgram_ = 0;
+    GLuint fsrTexture_ = 0;
+    GLuint fsrFramebuffer_ = 0;
     int textureWidth_ = 0;
     int textureHeight_ = 0;
+    int fsrTargetWidth_ = 0;
+    int fsrTargetHeight_ = 0;
 };
 
 } // namespace droiduvc
