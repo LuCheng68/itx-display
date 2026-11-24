@@ -1,15 +1,16 @@
-# ITX Display v0.4.6
+# ITX Display v0.6.2
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.4.6 (versionCode 10)
+- Application version: 0.6.2 (versionCode 22)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
+- Native ABI: arm64-v8a only (Snapdragon 870 / ARM64 target)
 - minSdk: 24
 - JDK: 17
-- UVC engine dependency: `io.github.mikimn:droiduvc:0.2.1`
+- UVC engine: locally maintained `libraries/droiduvc` module based on droiduvc 0.2.1
 - Preferred input: MJPEG
 - Requested mode: 1920x1080 at 50 FPS; actual negotiated mode is reported in the information panel
 - Audio: not yet implemented
@@ -169,3 +170,122 @@ Read-only UVC control query returned:
 | Backlight compensation | Not declared | — | — | — | — |
 
 Interpretation: all four readable controls are currently at the device-reported default. This gives no evidence that ITX Display changed these controls away from their defaults. It does not prove that 50 is a perceptually neutral value, nor does it identify the root cause of the RGB-only highlight issue. Keep the current YCbCr output as the verified workaround while investigating raw UVC payload values. No automatic control writes or resets should be made.
+
+
+## v0.5.0 raw UVC payload pipeline (development branch)
+
+- Replaced the Maven droiduvc binary dependency with a local, patchable Android library module based on upstream droiduvc v0.2.1. The upstream Apache-2.0 license is retained in the module; its libjpeg-turbo, libusb and libuvc dependencies are fetched by CMake at pinned upstream commits.
+- Added a native JNI raw-frame observer invoked before `uvc_any2rgb()`. The observer receives a borrowed direct ByteBuffer over the libuvc frame and must copy it synchronously before returning.
+- Added an app-side three-slot reusable buffer pool and a two-frame bounded latest-frame queue. When full, the oldest queued analysis frame is discarded instead of building latency.
+- Added a worker-side MJPEG header parser that reports JPEG chroma sampling (4:2:0 / 4:2:2 / 4:4:4 when present), frame size, callback FPS, analysis FPS, sequence gaps and queue drops.
+- The original droiduvc Surface preview remains active in parallel. This is the raw payload acquisition/queue foundation only: it does not yet decode the raw payload for display, perform RGB range correction, or run GPU color conversion/interpolation.
+
+
+## v0.5.1 native performance and diagnostics UI
+
+- The Codemagic build log showed the locally built libjpeg-turbo using CMAKE_BUILD_TYPE=Debug with no optimization flags. The native video hot path is now explicitly compiled with `-O2` in debuggable APKs: libjpeg-turbo is built as Release; libusb, libuvc, droiduvc and the RGB blitter are optimized.
+- Disabled unused libjpeg-turbo tools and tests in the Android build.
+- Separated live raw-UVC metrics from the manual UVC color-control diagnostic text. FPS updates no longer overwrite the color-control values shown after the user taps “Read UVC color controls”.
+- This is a performance hypothesis supported by the build flags, not yet a verified FPS improvement. The current preview is still CPU MJPEG decode + RGB conversion + CPU blit; GPU shader rendering is not implemented yet.
+
+
+## v0.5.2 Snapdragon 870 diagnostics and RGB highlight probe
+
+- Added native timing counters for the raw-frame observer/JNI copy, MJPEG-to-RGB decode, Surface lock/blit/post, and total native frame callback. The counters are cumulative and presented as averages plus the decode maximum; this identifies the actual hot stage before applying CPU affinity or adding worker threads.
+- The raw-frame header analyzer now runs at Android background thread priority. No CPU-core affinity is forced: Android/Qualcomm's scheduler remains free to place threads on the appropriate Kryo 585 cluster.
+- Added a user-triggered one-frame grayscale chart probe. It decodes only one selected MJPEG frame at half resolution on the background analysis worker and samples ten fixed patch centers (expected values 16, 32, 64, 96, 128, 160, 192, 220, 240, 255). It does not add continuous JPEG decoding to the 50 FPS path.
+- This probe distinguishes whether the USB MJPEG payload still contains separable highlight levels. If the 220/240/255 samples collapse inside the raw MJPEG decode, the clipping happened before Android rendering; if they remain separated, investigate the existing native conversion and Surface display path.
+- No automatic RGB range compensation has been enabled. Black appearing normal while highlights collapse is consistent with high-end clipping, but it is not sufficient evidence to choose Full/Limited expansion blindly.
+
+
+## v0.5.3 RGB highlight diagnosis and ARM64-only packaging
+
+### Measured grayscale baseline from the Hagibis / MACROSILICON UVC device
+
+Test mode: 1920×1080 MJPEG at 50 FPS, JPEG sampling 4:2:2. The probe decodes one copied original UVC MJPEG payload with Android BitmapFactory at half resolution, before the droiduvc native `uvc_any2rgb()` conversion and before Surface presentation. It samples ten center patches from the grayscale chart.
+
+| Expected | RGB HDMI input | YCbCr 4:4:4 HDMI input |
+|---:|---:|---:|
+| 16 | 6 | 22 |
+| 32 | 26 | 38 |
+| 64 | 63 | 71 |
+| 96 | 100 | 102 |
+| 128 | 137 | 134 |
+| 160 | 174 | 164 |
+| 192 | 211 | 197 |
+| 220 | 243 | 225 |
+| 240 | 255 | 244 |
+| 255 | 255 | 254 |
+
+Interpretation:
+- The RGB-input defect is already present in the UVC MJPEG payload as decoded by the probe; it is not first introduced by the app's later native MJPEG-to-RGB conversion or TextureView/Surface display stage.
+- In RGB mode, expected 240 and 255 both measure 255. The high-end has a clipped plateau in this sample; later processing cannot recover the distinction once both levels have become the same value.
+- The curve is broadly consistent with a range/level expansion plus an offset and high-end clipping, but this measurement alone does not uniquely identify whether the responsible stage is the capture card's HDMI receiver, its internal image processing/JPEG encoder, or HDMI range signaling. Do not blindly apply a Full/Limited transform to already-decoded JPEG RGB values.
+- In YCbCr 4:4:4 mode, the measured top levels remain distinct (244 and 254), matching the user's observation that this path looks more correct. Keep YCbCr as the verified fallback.
+- The diagnostic classifier now explicitly flags a 240/255 high-end plateau instead of incorrectly reporting that the highlight steps remain distinguishable.
+
+### Frame continuity observation
+
+A 50 FPS report showed 1,284 callbacks and 1,284 analyzed frames with zero app-side queue drops, but 18 UVC sequence gaps (latest sequence 1,302). The queue's drop count and UVC sequence discontinuities are different metrics. This suggests possible gaps upstream of the app analysis queue and should be rechecked over a longer capture; it is not yet proof of USB transport loss.
+
+### Packaging
+
+- Restrict both the app and local droiduvc native build to `arm64-v8a`; x86_64 is not packaged for the target Snapdragon 870 tablet.
+- No changes to the UVC brightness, contrast, saturation or hue controls are made automatically.
+
+
+## v0.5.5 frame-cadence and queue-latency diagnostics
+
+- Added callback inter-frame interval average and maximum measurements using Android's monotonic clock.
+- Added a separate capture-timestamp cadence measurement when libuvc supplies positive, strictly increasing capture-finished timestamps; devices/backends that do not supply usable timestamps are reported explicitly.
+- Added average and maximum time from raw-frame callback entry to analysis-worker start. This includes payload copying and queue wait, and is not presented as end-to-end display latency.
+- These metrics establish the timing budget for the next frame-interpolation prototype. They do not perform interpolation, add a display-buffering frame, or change the existing preview path.
+
+
+## v0.5.6 Vulkan device capability probe
+
+- Added a read-only native Vulkan probe using the Android system `libvulkan.so` loader.
+- The UVC diagnostics report now lists each Vulkan physical device, API version, driver version, vendor/device IDs, compute and graphics queue availability, local device memory, and selected optional extensions.
+- The probe runs during device diagnostics only. It does not access video frames, create a compute workload, load ncnn/RIFE, or change the existing UVC preview path.
+- This is a compatibility check before integrating an Android-callable RIFE/ncnn inference library. Vulkan enumeration success alone is not proof that a particular RIFE model can run at 1080p50.
+
+
+## v0.5.7 Java/Kotlin Vulkan probe interop fix
+
+- Exposed `UvcCamera.vulkanDeviceInfo()` as a Java-visible static method with `@JvmStatic`, matching the call site in `MainActivity`.
+
+
+## v0.5.8 frame-jitter diagnostics and report identity
+
+- Clarified that libuvc `capture_time_finished` is a host-side frame-completion timestamp, not a camera hardware clock.
+- Added maximum libuvc frame-completion interval and cumulative interval counts above 30, 40 and 60 ms for both callback-arrival and libuvc completion timestamps. This helps distinguish occasional callback scheduling spikes from broader frame-delivery jitter.
+- Added app version/versionCode to the copied UVC diagnostic report so reports can be associated with the APK that produced them.
+- Added the native decode/blit timing summary to the copied report, alongside the existing UVC queue and timing metrics.
+
+
+## v0.6.0 RIFE 4.6 Vulkan throughput experiment
+
+- Added pinned RIFE ncnn Vulkan and ncnn source dependencies for ARM64 Android builds, using the Android system Vulkan loader and the already-tested Adreno 650 compute path.
+- Added an explicit user-triggered download of the RIFE 4.6 model into app-private storage. Both model files are checked for exact size and Git blob SHA-1 before they are passed to native code.
+- Added a native RIFE 4.6 Vulkan engine with a three-slot RGB frame pool and a bounded latest-frame queue. The worker processes four of every five consecutive 50 FPS input intervals (40 generated-frame inference attempts per second, approximately 90 FPS total target) and skips one interval in five.
+- Added inference and RGB-copy timing, throughput, skip and drop counters to the diagnostic report.
+- **This release is a throughput-validation build only.** RIFE output is currently measured and discarded; the existing UVC Surface path still displays original frames at the input frame rate. Model loading and inference remain off by default. No claim is made that Adreno 650 can sustain 1080p90 until the device test confirms it.
+- The RIFE and ncnn source projects retain their upstream licenses; review the included upstream license files before redistributing.
+
+
+## v0.6.1 RIFE FP16 arithmetic and bounded stress test
+
+- The pinned RIFE source previously forced `use_fp16_arithmetic = false`. CMake now applies a small, checked source patch so ncnn enables FP16 arithmetic only when the selected Vulkan device reports `support_fp16_arithmetic()`; unsupported devices keep the upstream-safe setting.
+- The RIFE device summary reports whether FP16 arithmetic is enabled, making the hardware capability and selected path visible in the copied diagnostic report.
+- The manual 1080p RIFE throughput stress test now stops automatically after 15 seconds. This prevents a forgotten benchmark from continuously saturating the Adreno GPU and disturbing the low-latency UVC preview.
+- This remains a throughput-validation experiment: generated frames are measured and discarded. The preview still displays the original UVC stream. FP16 numerical quality and speed must be checked on the Xiaomi Pad 5 Pro; no 1080p90 playback claim is made.
+
+
+## v0.6.2 low-resolution RIFE throughput experiment
+
+- Keep the UVC negotiated capture and Surface preview at the original resolution (1920×1080 on the current device). The optional RIFE benchmark now reduces only its private inference copy to an aspect-preserving maximum of 320×180 before enqueueing it; the original display buffer is not modified.
+- The reduction is nearest-neighbour and intentionally lightweight on the UVC callback thread. This is a throughput experiment, not the final image-quality resampler.
+- Reduce benchmark cadence to one attempted intermediate frame per two consecutive input intervals: up to 25 inference attempts/s and a theoretical 75 FPS total with a 50 FPS source. This is a more conservative target than the v0.6.0 90 FPS experiment.
+- The diagnostic device string reports the RIFE input dimensions. The RGB copy metric now measures the low-resolution reduction/copy, not a full-resolution frame copy.
+- The generated 320×180 outputs are still discarded; they are not presented or upscaled. A 15-second automatic benchmark limit remains enabled.
+- This build is intended to establish whether the Adreno 650 can sustain low-resolution inference without disrupting the 1080p UVC preview. It does not claim 75 FPS or 90 FPS playback until measured on device.

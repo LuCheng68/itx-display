@@ -13,4 +13,5 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "ITXDisplay"
-include(":app")
+include(":app", ":droiduvc")
+project(":droiduvc").projectDir = file("libraries/droiduvc")

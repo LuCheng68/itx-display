@@ -1,0 +1,234 @@
+package com.mikimn.droiduvc
+
+import android.util.Log
+import android.view.Surface
+import java.io.IOException
+import java.util.Locale
+
+/**
+ * Pixel format of a camera stream. The codes are shared with the native layer
+ * (`PixelFormatCode` in `core/stream_mode.h`); `UvcCameraTest` and `stream_mode_test.cpp` both pin
+ * them so the two sides cannot drift apart silently.
+ */
+enum class StreamFormat(internal val code: Int) {
+    MJPEG(0),
+    YUYV(1),
+
+    /** Any other format the camera advertises (NV12, H.264, ...); it cannot be rendered. */
+    OTHER(2);
+
+    /** True for the formats the library can convert for display (everything but [OTHER]). */
+    val isRenderable: Boolean get() = this != OTHER
+
+    internal companion object {
+        fun fromCode(code: Int) = values().firstOrNull { it.code == code } ?: OTHER
+    }
+}
+
+/** A stream mode: pixel format, size in pixels and frame rate. */
+data class StreamMode(val format: StreamFormat, val width: Int, val height: Int, val fps: Int) {
+    internal companion object {
+        /** Reads one `{format, width, height, fps}` quadruple starting at [offset]. */
+        fun fromInts(ints: IntArray, offset: Int = 0) =
+            StreamMode(StreamFormat.fromCode(ints[offset]), ints[offset + 1], ints[offset + 2], ints[offset + 3])
+    }
+}
+
+/**
+ * What the device reports about itself. [uvcVersion] is the UVC specification it complies with, e.g. "1.10". The ids
+ * and the strings are null when the device does not provide them or they could not be read.
+ */
+data class CameraInfo(
+    val vendorId: Int?,
+    val productId: Int?,
+    val uvcVersion: String,
+    val manufacturer: String?,
+    val product: String?,
+    val serialNumber: String?,
+) {
+    internal companion object {
+        /** Builds the info from the native `{vendorId, productId, bcdUVC}` (ids are -1 if unreadable) and strings. */
+        fun from(ints: IntArray, strings: Array<String?>) = CameraInfo(
+            vendorId = ints[0].takeIf { it >= 0 },
+            productId = ints[1].takeIf { it >= 0 },
+            // Locale.ROOT: the text must not depend on the user's digits or separators.
+            uvcVersion = String.format(Locale.ROOT, "%d.%02x", ints[2] shr 8 and 0xFF, ints[2] and 0xFF),
+            manufacturer = strings.getOrNull(0),
+            product = strings.getOrNull(1),
+            serialNumber = strings.getOrNull(2),
+        )
+    }
+}
+
+/**
+ * A UVC camera opened from a file descriptor obtained via
+ * [android.hardware.usb.UsbDeviceConnection.getFileDescriptor]. The caller must keep that
+ * connection open until [close] returns.
+ */
+class UvcCamera internal constructor(private val native: UvcNative, private var handle: Long) : AutoCloseable {
+
+    private var cachedControls: CameraControls? = null
+
+    private var cachedInfo: CameraInfo? = null
+
+    /**
+     * Identity of the device (vendor/product ids, strings, UVC version); works without streaming. The first access
+     * reads the descriptors over USB (two JNI calls and up to three string requests, under the camera lock), so call
+     * it from a background thread; the result is cached because descriptors do not change.
+     */
+    val info: CameraInfo
+        @Synchronized get() {
+            check(handle != 0L) { "Camera is closed" }
+            return cachedInfo ?: CameraInfo.from(native.deviceInfo(handle), native.deviceStrings(handle)).also { cachedInfo = it }
+        }
+
+    /**
+     * The camera's controls (zoom, exposure, focus, ...), usable before or during streaming. Only
+     * controls the device reports as supported are present, see [CameraControls].
+     */
+    val controls: CameraControls
+        @Synchronized get() {
+            check(handle != 0L) { "Camera is closed" }
+            return cachedControls ?: CameraControls(controlBackend, native.controlInfo(handle)).also { cachedControls = it }
+        }
+
+    // Control transfers go through the camera's lock so they can never race a close.
+    private val controlBackend = object : ControlBackend {
+        override fun get(unit: Int, selector: Int, request: Int, length: Int): ByteArray = synchronized(this@UvcCamera) {
+            check(handle != 0L) { "Camera is closed" }
+            native.getControl(handle, unit, selector, request, length)
+        }
+
+        override fun set(unit: Int, selector: Int, data: ByteArray) = synchronized(this@UvcCamera) {
+            check(handle != 0L) { "Camera is closed" }
+            native.setControl(handle, unit, selector, data)
+        }
+    }
+
+    /**
+     * The renderable modes the camera advertises ([StreamFormat.MJPEG] and [StreamFormat.YUYV]; a size
+     * with several frame rates appears once per rate). Other formats are omitted because [start] cannot
+     * display them.
+     */
+    @Synchronized
+    fun supportedModes(): List<StreamMode> {
+        check(handle != 0L) { "Camera is closed" }
+        val ints = native.listModes(handle)
+        return (0 until ints.size / 4).map { StreamMode.fromInts(ints, it * 4) }.filter { it.format.isRenderable }
+    }
+
+    /**
+     * Installs an optional raw UVC frame observer. The callback runs on the native streaming
+     * thread. Its direct ByteBuffer is valid only for the duration of onFrame(); implementations
+     * must copy immediately, return quickly and must not call back into this camera.
+     */
+    /** Toggles ITX Display's optional display-only RGB grayscale experiment. */
+    @Synchronized
+    fun setRgbExperimentCompensation(enabled: Boolean) {
+        check(handle != 0L) { "Camera is closed" }
+        native.setRgbExperimentCompensation(handle, enabled)
+    }
+
+    /** Enables the optional FSR1 RCAS pass for native 1920x1080 preview frames. */
+    @Synchronized
+    fun setFsrEnabled(enabled: Boolean) {
+        check(handle != 0L) { "Camera is closed" }
+        native.setFsrEnabled(handle, enabled)
+    }
+
+    /** Loads the optional RIFE 4.6 model and initializes ncnn Vulkan on a background thread. */
+    @Synchronized
+    fun loadRifeModel(modelDirectory: String): String {
+        check(handle != 0L) { "Camera is closed" }
+        return native.loadRifeModel(handle, modelDirectory)
+    }
+
+    /** Enables a bounded, background RIFE throughput test; it does not alter Surface presentation. */
+    @Synchronized
+    fun setRifeInferenceEnabled(enabled: Boolean) {
+        check(handle != 0L) { "Camera is closed" }
+        native.setRifeInferenceEnabled(handle, enabled)
+    }
+
+    /** Returns submitted, processed, skipped, dropped, inference total/max ns, copy total/max ns, and pairs. */
+    @Synchronized
+    fun rifeInferenceStats(): LongArray {
+        check(handle != 0L) { "Camera is closed" }
+        return native.rifeInferenceStats(handle)
+    }
+
+    @Synchronized
+    fun setRawFrameListener(listener: RawFrameListener?) {
+        check(handle != 0L) { "Camera is closed" }
+        native.setRawFrameListener(handle, listener)
+    }
+
+    /**
+     * Streams frames to [surface] until [stop] or [close], returning the mode actually negotiated:
+     * the closest the camera supports to the requested size and rate, using [preferredFormat] first
+     * if given (default order: MJPEG, YUYV, anything else). Throws [IllegalArgumentException] for a
+     * non-renderable [preferredFormat] and [IOException] on failure.
+     */
+    @Synchronized
+    fun start(
+        surface: Surface,
+        width: Int = 640,
+        height: Int = 480,
+        fps: Int = 30,
+        preferredFormat: StreamFormat? = null,
+    ): StreamMode {
+        check(handle != 0L) { "Camera is closed" }
+        require(preferredFormat?.isRenderable != false) { "$preferredFormat streams cannot be displayed" }
+        Log.i(TAG, "start(valid=${surface.isValid}, ${width}x$height@$fps, $preferredFormat)")
+        return StreamMode.fromInts(native.start(handle, surface, width, height, fps, preferredFormat?.code ?: -1))
+    }
+
+    /**
+     * Returns native cumulative timing counters. The first nine entries retain
+     * the original frame/observer/decode/preview/end-to-end timing layout.
+     * Entries 9-23 report preview backend, GLES counters/timings, FSR applied
+     * frame count, FSR draw-call CPU time, shader availability/enable state, and
+     * shader initialization stage error (1 fragment compile, 2 vertex compile,
+     * 3 link, 4 output framebuffer allocation).
+     */
+    @Synchronized
+    fun performanceStats(): LongArray {
+        check(handle != 0L) { "Camera is closed" }
+        return native.performanceStats(handle)
+    }
+
+    /** Streams the given [mode] (see [supportedModes]); returns the mode actually negotiated. */
+    fun start(surface: Surface, mode: StreamMode): StreamMode =
+        start(surface, mode.width, mode.height, mode.fps, mode.format)
+
+    /** Stops streaming. Safe to call at any time, including before [start] or after [close]. */
+    @Synchronized
+    fun stop() {
+        Log.i(TAG, "stop()")
+        if (handle != 0L) native.stop(handle)
+    }
+
+    /** Releases the camera. Safe to call more than once. */
+    @Synchronized
+    override fun close() {
+        if (handle != 0L) {
+            native.setRawFrameListener(handle, null)
+            native.close(handle)
+        }
+        handle = 0L
+    }
+
+    companion object {
+        private const val TAG = "UvcCamera"
+
+        /** Reads the system Vulkan loader and physical-device capabilities without touching the video stream. */
+        @JvmStatic
+        fun vulkanDeviceInfo(): String = NativeUvc.vulkanDeviceInfo()
+
+        /** @throws IOException if the descriptor is not a usable UVC device. */
+        fun open(fileDescriptor: Int): UvcCamera = open(NativeUvc, fileDescriptor)
+
+        internal fun open(native: UvcNative, fileDescriptor: Int): UvcCamera =
+            UvcCamera(native, native.open(fileDescriptor))
+    }
+}
