@@ -186,8 +186,10 @@ class UvcCamera internal constructor(private val native: UvcNative, private var 
     /**
      * Returns native cumulative timing counters. The first nine entries retain
      * the original frame/observer/decode/preview/end-to-end timing layout.
-     * Entries 9-22 report preview backend, GLES counters/timings, FSR applied
-     * frame count, FSR draw-call CPU time, FSR shader availability and enable state.
+     * Entries 9-23 report preview backend, GLES counters/timings, FSR applied
+     * frame count, FSR draw-call CPU time, shader availability/enable state, and
+     * shader initialization stage error (1 fragment compile, 2 vertex compile,
+     * 3 link, 4 output framebuffer allocation).
      */
     @Synchronized
     fun performanceStats(): LongArray {
