@@ -9,6 +9,7 @@
 #include "blit.h"
 #include "stream_mode.h"
 #include "rife_engine.h"
+#include "gles_preview_renderer.h"
 
 #include <algorithm>
 #include <array>
@@ -52,6 +53,7 @@ struct Camera {
     uint64_t totalFrameMaxNs = 0;
     std::atomic<bool> rgbExperimentCompensation{false};
     std::shared_ptr<droiduvc::RifeInferenceEngine> rifeEngine;
+    std::unique_ptr<droiduvc::GlesPreviewRenderer> glesRenderer;
     bool rifeInferenceEnabled = false;
     std::mutex mutex;
 };
@@ -259,6 +261,20 @@ void onFrame(uvc_frame_t *frame, void *user) {
     }
 
     const auto blitStart = Clock::now();
+    if (cam->glesRenderer && cam->glesRenderer->active() &&
+        cam->glesRenderer->submit(static_cast<const uint8_t *>(cam->rgb->data),
+                                  cam->rgb->width, cam->rgb->height, cam->rgb->step)) {
+        const uint64_t blitNs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - blitStart).count());
+        cam->blitTotalNs += blitNs;
+        cam->blitMaxNs = std::max(cam->blitMaxNs, blitNs);
+        const uint64_t totalNs = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - frameStart).count());
+        cam->totalFrameNs += totalNs;
+        cam->totalFrameMaxNs = std::max(cam->totalFrameMaxNs, totalNs);
+        ++cam->frameCount;
+        return;
+    }
     ANativeWindow_Buffer buf;
     if (ANativeWindow_lock(cam->window, &buf, nullptr) != 0) {
         if (cam->failedFrames++ < 5) LOGE("ANativeWindow_lock failed");
@@ -285,6 +301,10 @@ void onFrame(uvc_frame_t *frame, void *user) {
 
 void releaseWindow(Camera *cam) {
     std::lock_guard<std::mutex> lock(cam->mutex);
+    if (cam->glesRenderer) {
+        cam->glesRenderer->stop();
+        cam->glesRenderer.reset();
+    }
     if (cam->window) ANativeWindow_release(cam->window);
     cam->window = nullptr;
     if (cam->rgb) uvc_free_frame(cam->rgb);
@@ -381,10 +401,21 @@ Java_com_mikimn_droiduvc_NativeUvc_start(JNIEnv *env, jobject, jlong handle,
         return nullptr;
     }
     cam->failedFrames = 0;
-    ANativeWindow_setBuffersGeometry(window, width, height, WINDOW_FORMAT_RGBX_8888);
+    // First try the dedicated GLES renderer. If EGL/GLES is unavailable, restore
+    // the original RGBX software-buffer geometry and keep the CPU preview path.
+    auto renderer = std::make_unique<droiduvc::GlesPreviewRenderer>();
+    const bool glesReady = renderer->start(window);
+    if (!glesReady) {
+        ANativeWindow_setBuffersGeometry(window, width, height, WINDOW_FORMAT_RGBX_8888);
+        LOGE("GLES renderer initialization failed; falling back to CPU blit");
+        renderer.reset();
+    } else {
+        LOGI("GLES pass-through renderer initialized");
+    }
     {
         std::lock_guard<std::mutex> lock(cam->mutex);
         cam->window = window;
+        cam->glesRenderer = std::move(renderer);
     }
 
     err = uvc_start_streaming(cam->devh, &ctrl, onFrame, cam, 0);
