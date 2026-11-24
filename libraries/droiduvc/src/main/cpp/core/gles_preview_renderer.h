@@ -2,6 +2,7 @@
 
 #include <android/native_window.h>
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 
 #include <algorithm>
@@ -156,7 +157,7 @@ private:
 
         EGLint nativeFormat = 0;
         if (!eglGetConfigAttrib(display_, config, EGL_NATIVE_VISUAL_ID, &nativeFormat)) return false;
-        ANativeWindow_setBuffersGeometry(window_, 0, 0, nativeFormat);
+        if (ANativeWindow_setBuffersGeometry(window_, 0, 0, nativeFormat) != 0) return false;
 
         const EGLint contextAttrs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
         context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, contextAttrs);
