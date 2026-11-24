@@ -19,10 +19,14 @@ android {
         minSdk 24
         targetSdk 35
         consumerProguardFiles "consumer-rules.pro"
+        // Target ARM64 Android devices only; omit x86_64 native libraries.
+        ndk {
+            abiFilters "arm64-v8a"
+        }
         externalNativeBuild {
             cmake {
                 arguments "-DANDROID_STL=c++_shared"
-                abiFilters "arm64-v8a", "x86_64"
+                abiFilters "arm64-v8a"
             }
         }
     }
