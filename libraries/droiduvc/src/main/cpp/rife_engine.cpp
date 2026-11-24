@@ -181,9 +181,11 @@ bool RifeInferenceEngine::initialize(const std::string& modelDirectory, std::str
     if (impl_->gpuIndex < 0 || impl_->gpuIndex >= gpuCount) impl_->gpuIndex = 0;
 
     const ncnn::GpuInfo& gpu = ncnn::get_gpu_info(impl_->gpuIndex);
+    const bool fp16ArithmeticSupported = gpu.support_fp16_arithmetic();
     impl_->deviceInfo = std::string("ncnn Vulkan：") + gpu.device_name()
             + " · API " + std::to_string(VK_VERSION_MAJOR(gpu.api_version()))
-            + "." + std::to_string(VK_VERSION_MINOR(gpu.api_version()));
+            + "." + std::to_string(VK_VERSION_MINOR(gpu.api_version()))
+            + " · FP16 算术=" + (fp16ArithmeticSupported ? "启用" : "不支持");
 
     impl_->model.reset(new RIFE(impl_->gpuIndex, false, false, false, 1, false, true));
     const int loadResult = impl_->model->load(modelDirectory);
