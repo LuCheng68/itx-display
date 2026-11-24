@@ -176,4 +176,4 @@ target_include_directories(droiduvc PRIVATE
         ${itx_rife_source_SOURCE_DIR}/src
         ${itx_ncnn_SOURCE_DIR}/src)
 target_compile_options(droiduvc PRIVATE -O2)
-target_link_libraries(droiduvc PRIVATE droiduvc_core LibUVC::UVCStatic usb-1.0 android log ${ANDROID_VULKAN_LIBRARY} itx_rife)
+target_link_libraries(droiduvc PRIVATE droiduvc_core LibUVC::UVCStatic usb-1.0 android log EGL GLESv3 ${ANDROID_VULKAN_LIBRARY} itx_rife)
