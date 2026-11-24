@@ -54,6 +54,7 @@ struct Camera {
     std::atomic<bool> rgbExperimentCompensation{false};
     std::shared_ptr<droiduvc::RifeInferenceEngine> rifeEngine;
     std::unique_ptr<droiduvc::GlesPreviewRenderer> glesRenderer;
+    bool glesFallbackGeometrySet = false;
     bool rifeInferenceEnabled = false;
     std::mutex mutex;
 };
@@ -275,6 +276,17 @@ void onFrame(uvc_frame_t *frame, void *user) {
         ++cam->frameCount;
         return;
     }
+    // If the GLES worker stopped after a Surface/EGL error, restore the
+    // known CPU RGBX buffer format before using ANativeWindow_lock again.
+    if (cam->glesRenderer && !cam->glesRenderer->active() &&
+        !cam->glesFallbackGeometrySet) {
+        const int geometryResult = ANativeWindow_setBuffersGeometry(
+                cam->window, cam->rgb->width, cam->rgb->height, WINDOW_FORMAT_RGBX_8888);
+        if (geometryResult != 0) {
+            LOGE("Unable to restore RGBX Surface geometry after GLES failure: %d", geometryResult);
+        }
+        cam->glesFallbackGeometrySet = true;
+    }
     ANativeWindow_Buffer buf;
     if (ANativeWindow_lock(cam->window, &buf, nullptr) != 0) {
         if (cam->failedFrames++ < 5) LOGE("ANativeWindow_lock failed");
@@ -401,6 +413,7 @@ Java_com_mikimn_droiduvc_NativeUvc_start(JNIEnv *env, jobject, jlong handle,
         return nullptr;
     }
     cam->failedFrames = 0;
+    cam->glesFallbackGeometrySet = false;
     // First try the dedicated GLES renderer. If EGL/GLES is unavailable, restore
     // the original RGBX software-buffer geometry and keep the CPU preview path.
     auto renderer = std::make_unique<droiduvc::GlesPreviewRenderer>();
