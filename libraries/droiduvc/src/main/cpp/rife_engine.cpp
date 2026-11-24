@@ -7,6 +7,7 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <memory>
@@ -15,6 +16,11 @@
 #include <vector>
 
 namespace droiduvc {
+
+namespace {
+constexpr int kMaxRifeInputWidth = 320;
+constexpr int kMaxRifeInputHeight = 180;
+}
 
 struct RifeInferenceEngine::Impl {
     struct FrameSlot {
@@ -35,8 +41,8 @@ struct RifeInferenceEngine::Impl {
     bool enabled = false;
     bool resetRequested = false;
     bool gpuInstanceCreated = false;
-    int width = 0;
-    int height = 0;
+    int sourceWidth = 0;
+    int sourceHeight = 0;
     int gpuIndex = -1;
     std::string deviceInfo;
 
@@ -94,8 +100,8 @@ struct RifeInferenceEngine::Impl {
             bool shouldProcess = false;
             if (contiguous) {
                 ++pairIndex;
-                // 4 inferred intervals out of every 5: 50 input + 40 generated ~= 90 fps.
-                shouldProcess = (pairIndex % 5) != 0;
+                // Infer one of every two input intervals: 50 original + up to 25 generated ~= 75 fps.
+                shouldProcess = (pairIndex % 2) == 1;
             }
 
             if (shouldProcess) {
@@ -185,7 +191,9 @@ bool RifeInferenceEngine::initialize(const std::string& modelDirectory, std::str
     impl_->deviceInfo = std::string("ncnn Vulkan：") + gpu.device_name()
             + " · API " + std::to_string(VK_VERSION_MAJOR(gpu.api_version()))
             + "." + std::to_string(VK_VERSION_MINOR(gpu.api_version()))
-            + " · FP16 算术=" + (fp16ArithmeticSupported ? "启用" : "不支持");
+            + " · FP16 算术=" + (fp16ArithmeticSupported ? "启用" : "不支持")
+            + " · RIFE 推理输入=" + std::to_string(kMaxRifeInputWidth)
+            + "×" + std::to_string(kMaxRifeInputHeight);
 
     impl_->model.reset(new RIFE(impl_->gpuIndex, false, false, false, 1, false, true));
     const int loadResult = impl_->model->load(modelDirectory);
@@ -226,13 +234,22 @@ void RifeInferenceEngine::submit(const uint8_t* rgb, int width, int height,
     const size_t rowBytes = static_cast<size_t>(width) * 3;
     if (rowBytes > 32u * 1024u * 1024u / static_cast<size_t>(height)) return;
 
+    // Keep UVC capture and Surface presentation at the negotiated resolution, but
+    // copy only a 320x180 (or smaller, aspect-preserving) image into the RIFE queue.
+    const double scale = std::min({1.0,
+            static_cast<double>(kMaxRifeInputWidth) / width,
+            static_cast<double>(kMaxRifeInputHeight) / height});
+    const int inferenceWidth = std::max(32, static_cast<int>(std::lround(width * scale)));
+    const int inferenceHeight = std::max(32, static_cast<int>(std::lround(height * scale)));
+    const size_t inferenceRowBytes = static_cast<size_t>(inferenceWidth) * 3;
+
     std::lock_guard<std::mutex> lock(impl_->mutex);
     if (!impl_->running || !impl_->enabled) return;
-    if (impl_->width == 0) {
-        impl_->width = width;
-        impl_->height = height;
+    if (impl_->sourceWidth == 0) {
+        impl_->sourceWidth = width;
+        impl_->sourceHeight = height;
     }
-    if (impl_->width != width || impl_->height != height) {
+    if (impl_->sourceWidth != width || impl_->sourceHeight != height) {
         ++impl_->dropped;
         return;
     }
@@ -251,16 +268,29 @@ void RifeInferenceEngine::submit(const uint8_t* rgb, int width, int height,
     impl_->freeSlots.pop_front();
     Impl::FrameSlot& slot = impl_->slots[static_cast<size_t>(slotIndex)];
     const auto copyStart = std::chrono::steady_clock::now();
-    slot.rgb.resize(rowBytes * static_cast<size_t>(height));
-    for (int y = 0; y < height; ++y) {
-        std::memcpy(slot.rgb.data() + static_cast<size_t>(y) * rowBytes,
-                    rgb + static_cast<size_t>(y) * strideBytes, rowBytes);
+    slot.rgb.resize(inferenceRowBytes * static_cast<size_t>(inferenceHeight));
+
+    // Nearest-neighbour reduction is deliberately kept lightweight on the UVC
+    // callback thread. Only the inference copy is reduced; the displayed RGB
+    // frame remains full resolution and is not modified.
+    for (int y = 0; y < inferenceHeight; ++y) {
+        const int sourceY = std::min(height - 1,
+                static_cast<int>((static_cast<int64_t>(y) * height) / inferenceHeight));
+        const uint8_t* sourceRow = rgb + static_cast<size_t>(sourceY) * strideBytes;
+        uint8_t* destinationRow = slot.rgb.data() + static_cast<size_t>(y) * inferenceRowBytes;
+        for (int x = 0; x < inferenceWidth; ++x) {
+            const int sourceX = std::min(width - 1,
+                    static_cast<int>((static_cast<int64_t>(x) * width) / inferenceWidth));
+            std::memcpy(destinationRow + static_cast<size_t>(x) * 3,
+                        sourceRow + static_cast<size_t>(sourceX) * 3, 3);
+        }
     }
+
     const uint64_t copyNs = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::steady_clock::now() - copyStart).count());
-    slot.width = width;
-    slot.height = height;
+    slot.width = inferenceWidth;
+    slot.height = inferenceHeight;
     slot.sequence = sequence;
     impl_->copyTotalNs += copyNs;
     impl_->copyMaxNs = std::max(impl_->copyMaxNs, copyNs);
