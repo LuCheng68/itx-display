@@ -279,3 +279,13 @@ A 50 FPS report showed 1,284 callbacks and 1,284 analyzed frames with zero app-s
 - The RIFE device summary reports whether FP16 arithmetic is enabled, making the hardware capability and selected path visible in the copied diagnostic report.
 - The manual 1080p RIFE throughput stress test now stops automatically after 15 seconds. This prevents a forgotten benchmark from continuously saturating the Adreno GPU and disturbing the low-latency UVC preview.
 - This remains a throughput-validation experiment: generated frames are measured and discarded. The preview still displays the original UVC stream. FP16 numerical quality and speed must be checked on the Xiaomi Pad 5 Pro; no 1080p90 playback claim is made.
+
+
+## v0.6.2 low-resolution RIFE throughput experiment
+
+- Keep the UVC negotiated capture and Surface preview at the original resolution (1920×1080 on the current device). The optional RIFE benchmark now reduces only its private inference copy to an aspect-preserving maximum of 320×180 before enqueueing it; the original display buffer is not modified.
+- The reduction is nearest-neighbour and intentionally lightweight on the UVC callback thread. This is a throughput experiment, not the final image-quality resampler.
+- Reduce benchmark cadence to one attempted intermediate frame per two consecutive input intervals: up to 25 inference attempts/s and a theoretical 75 FPS total with a 50 FPS source. This is a more conservative target than the v0.6.0 90 FPS experiment.
+- The diagnostic device string reports the RIFE input dimensions. The RGB copy metric now measures the low-resolution reduction/copy, not a full-resolution frame copy.
+- The generated 320×180 outputs are still discarded; they are not presented or upscaled. A 15-second automatic benchmark limit remains enabled.
+- This build is intended to establish whether the Adreno 650 can sustain low-resolution inference without disrupting the 1080p UVC preview. It does not claim 75 FPS or 90 FPS playback until measured on device.
