@@ -55,7 +55,14 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
     private volatile double averageCallbackIntervalMs;
     private volatile double maxCallbackIntervalMs;
     private volatile double averageCaptureIntervalMs;
+    private volatile double maxCaptureIntervalMs;
     private volatile long captureTimestampSamples;
+    private final AtomicLong callbackIntervalsOver30Ms = new AtomicLong();
+    private final AtomicLong callbackIntervalsOver40Ms = new AtomicLong();
+    private final AtomicLong callbackIntervalsOver60Ms = new AtomicLong();
+    private final AtomicLong captureIntervalsOver30Ms = new AtomicLong();
+    private final AtomicLong captureIntervalsOver40Ms = new AtomicLong();
+    private final AtomicLong captureIntervalsOver60Ms = new AtomicLong();
     private volatile double averageQueueWaitMs;
     private volatile double maxQueueWaitMs;
     private long previousCallbackNs;
@@ -98,15 +105,22 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
             averageCallbackIntervalMs = averageCallbackIntervalMs == 0
                     ? intervalMs : averageCallbackIntervalMs * 0.8 + intervalMs * 0.2;
             maxCallbackIntervalMs = Math.max(maxCallbackIntervalMs, intervalMs);
+            if (intervalMs > 30.0) callbackIntervalsOver30Ms.incrementAndGet();
+            if (intervalMs > 40.0) callbackIntervalsOver40Ms.incrementAndGet();
+            if (intervalMs > 60.0) callbackIntervalsOver60Ms.incrementAndGet();
         }
         previousCallbackNs = callbackNowNs;
-        // libuvc may not provide a capture timestamp for every backend/device. Only
-        // calculate cadence from positive, strictly increasing timestamps.
+        // libuvc's capture_time_finished is a host-side frame-completion timestamp,
+        // not a hardware camera clock. Only use positive, strictly increasing samples.
         if (captureTimeNs > 0) {
             if (previousCaptureTimeNs > 0 && captureTimeNs > previousCaptureTimeNs) {
                 double intervalMs = (captureTimeNs - previousCaptureTimeNs) / 1_000_000.0;
                 averageCaptureIntervalMs = averageCaptureIntervalMs == 0
                         ? intervalMs : averageCaptureIntervalMs * 0.8 + intervalMs * 0.2;
+                maxCaptureIntervalMs = Math.max(maxCaptureIntervalMs, intervalMs);
+                if (intervalMs > 30.0) captureIntervalsOver30Ms.incrementAndGet();
+                if (intervalMs > 40.0) captureIntervalsOver40Ms.incrementAndGet();
+                if (intervalMs > 60.0) captureIntervalsOver60Ms.incrementAndGet();
                 captureTimestampSamples++;
             }
             previousCaptureTimeNs = captureTimeNs;
@@ -260,9 +274,17 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
                 + "\nUVC 回调线程 TID：" + callbackTid
                 + "\n分析线程 TID：" + analyzerTid
                 + "\n回调帧间隔：" + String.format(Locale.US, "均值 %.2f ms / 最大 %.2f ms", averageCallbackIntervalMs, maxCallbackIntervalMs)
-                + "\n设备采集时间戳：" + (captureTimestampSamples > 0
-                        ? String.format(Locale.US, "有效间隔样本 %d / 平均 %.2f ms", captureTimestampSamples, averageCaptureIntervalMs)
-                        : "设备未提供可用的递增时间戳")
+                + String.format(Locale.US, "；超过 30/40/60 ms：%d/%d/%d 次",
+                        callbackIntervalsOver30Ms.get(), callbackIntervalsOver40Ms.get(), callbackIntervalsOver60Ms.get())
+                + "\nlibuvc 帧完成时间戳：" + (captureTimestampSamples > 0
+                        ? String.format(Locale.US, "有效间隔样本 %d / 平均 %.2f ms / 最大 %.2f ms",
+                                captureTimestampSamples, averageCaptureIntervalMs, maxCaptureIntervalMs)
+                        : "未提供可用的递增时间戳")
+                + (captureTimestampSamples > 0
+                        ? String.format(Locale.US, "；超过 30/40/60 ms：%d/%d/%d 次",
+                                captureIntervalsOver30Ms.get(), captureIntervalsOver40Ms.get(), captureIntervalsOver60Ms.get())
+                        : "")
+                + "\n说明：libuvc 帧完成时间戳属于主机侧时间，不是摄像头硬件时钟。"
                 + "\n回调到分析开始等待：" + String.format(Locale.US, "均值 %.2f ms / 最大 %.2f ms", averageQueueWaitMs, maxQueueWaitMs)
                 + "\n灰阶探测：" + grayProbeResult;
     }

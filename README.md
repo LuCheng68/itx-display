@@ -1,10 +1,10 @@
-# ITX Display v0.5.7
+# ITX Display v0.5.8
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.5.7 (versionCode 18)
+- Application version: 0.5.8 (versionCode 19)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - Native ABI: arm64-v8a only (Snapdragon 870 / ARM64 target)
@@ -253,3 +253,11 @@ A 50 FPS report showed 1,284 callbacks and 1,284 analyzed frames with zero app-s
 ## v0.5.7 Java/Kotlin Vulkan probe interop fix
 
 - Exposed `UvcCamera.vulkanDeviceInfo()` as a Java-visible static method with `@JvmStatic`, matching the call site in `MainActivity`.
+
+
+## v0.5.8 frame-jitter diagnostics and report identity
+
+- Clarified that libuvc `capture_time_finished` is a host-side frame-completion timestamp, not a camera hardware clock.
+- Added maximum libuvc frame-completion interval and cumulative interval counts above 30, 40 and 60 ms for both callback-arrival and libuvc completion timestamps. This helps distinguish occasional callback scheduling spikes from broader frame-delivery jitter.
+- Added app version/versionCode to the copied UVC diagnostic report so reports can be associated with the APK that produced them.
+- Added the native decode/blit timing summary to the copied report, alongside the existing UVC queue and timing metrics.

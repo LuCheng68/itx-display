@@ -568,6 +568,13 @@ public class MainActivity extends Activity {
                                            List<StreamMode> modes) {
         StringBuilder report = new StringBuilder();
         report.append("ITX Display UVC 诊断\n");
+        try {
+            android.content.pm.PackageInfo packageInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
+            report.append("应用版本：").append(packageInfo.versionName)
+                    .append(" (versionCode ").append(packageInfo.versionCode).append(")\n");
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+            report.append("应用版本：未知\n");
+        }
         report.append("实际模式：").append(describeMode(actual)).append("\n");
         report.append("设备报告模式数：").append(modes == null ? 0 : modes.size()).append("\n");
 
@@ -744,7 +751,8 @@ public class MainActivity extends Activity {
         }
         RawUvcFramePipeline pipeline = rawFramePipeline;
         String rawSummary = pipeline == null ? "UVC 原始帧：--" : pipeline.getDetailedReport();
-        String report = diagnosticsReport + "\n\n" + rawSummary;
+        String report = diagnosticsReport + "\n\n" + rawSummary
+                + "\n" + nativePerfSummary;
         clipboard.setPrimaryClip(ClipData.newPlainText("ITX Display UVC diagnostics", report));
         showStatus("UVC 诊断报告已复制。");
     }
