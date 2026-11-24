@@ -632,7 +632,7 @@ Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong 
     auto *cam = reinterpret_cast<Camera *>(handle);
     if (cam == nullptr) return nullptr;
     std::lock_guard<std::mutex> lock(cam->mutex);
-    const jlong values[9] = {
+    jlong values[18] = {
             static_cast<jlong>(cam->frameCount),
             static_cast<jlong>(cam->observerTotalNs),
             static_cast<jlong>(cam->observerMaxNs),
@@ -641,10 +641,19 @@ Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong 
             static_cast<jlong>(cam->blitTotalNs),
             static_cast<jlong>(cam->blitMaxNs),
             static_cast<jlong>(cam->totalFrameNs),
-            static_cast<jlong>(cam->totalFrameMaxNs)
+            static_cast<jlong>(cam->totalFrameMaxNs),
+            0, 0, 0, 0, 0, 0, 0, 0, 0
     };
-    jlongArray result = env->NewLongArray(9);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 9, values);
+    // 0 = CPU fallback, 1 = GLES renderer active, 2 = GLES renderer stopped/failed.
+    if (cam->glesRenderer) {
+        values[9] = cam->glesRenderer->active() ? 1 : 2;
+        const auto gpu = cam->glesRenderer->stats();
+        for (size_t i = 0; i < gpu.size(); ++i) {
+            values[10 + i] = static_cast<jlong>(gpu[i]);
+        }
+    }
+    jlongArray result = env->NewLongArray(18);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 18, values);
     return result;
 }
 
