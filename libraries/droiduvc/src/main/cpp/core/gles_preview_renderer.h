@@ -213,9 +213,21 @@ void main() {
             glDeleteShader(shader);
             return 0;
         }
+        static const char *vertexSource =
+                "#version 300 es\\n"
+                "layout(location=0) in vec2 aPosition;\\n"
+                "layout(location=1) in vec2 aTexCoord;\\n"
+                "void main(){ gl_Position=vec4(aPosition,0.0,1.0); }\\n";
+        GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
+        if (!vertexShader) {
+            glDeleteShader(shader);
+            return 0;
+        }
         GLuint program = glCreateProgram();
+        glAttachShader(program, vertexShader);
         glAttachShader(program, shader);
         glLinkProgram(program);
+        glDeleteShader(vertexShader);
         glDeleteShader(shader);
         GLint linked = GL_FALSE;
         glGetProgramiv(program, GL_LINK_STATUS, &linked);
