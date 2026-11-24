@@ -252,8 +252,8 @@ void onFrame(uvc_frame_t *frame, void *user) {
         return;
     }
 
-    // Optional RIFE throughput test. Copy decoded RGB into a bounded worker queue;
-    // the existing Surface preview remains untouched and is still the displayed output.
+    // Optional RIFE throughput test. Its result remains diagnostic-only; the
+    // active preview path below is independent of this inference experiment.
     if (cam->rifeInferenceEnabled && cam->rifeEngine) {
         cam->rifeEngine->submit(
                 static_cast<const uint8_t *>(cam->rgb->data),
