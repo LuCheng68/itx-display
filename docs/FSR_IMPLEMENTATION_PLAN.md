@@ -1,6 +1,6 @@
 # ITX Display FSR 1 implementation plan
 
-Status: Phase A pass-through GLES renderer prototype is implemented on the development branch. It attempts GLES for preview and falls back to the CPU blitter if EGL/GLES initialization fails. The code has not yet been independently build-verified or confirmed by a renderer-specific device report. FSR EASU/RCAS is not implemented.
+Status: Phase A GLES pass-through has been confirmed on the Xiaomi Pad 5 Pro / Adreno 650. Phase B has an initial, opt-in AMD FSR1 RCAS fragment pass for native 1920x1080 input. The RCAS shader, UI toggle and timing counters are committed, but the new code still requires an Android build and device validation. EASU 720p-to-1080p is not yet implemented.
 
 ## User-selected scope
 
@@ -43,15 +43,18 @@ The first FSR integration therefore needs a separate GPU-backed renderer rather 
 - [x] Add a bounded, latest-frame-wins RGB handoff from the UVC callback; the render queue is limited to one pending frame.
 - [x] Add CPU fallback when GLES initialization fails, and restore RGBX buffer geometry if the GLES render thread fails later.
 - [x] Expose renderer state, submitted/rendered/replaced frame counts, GL texture-upload call time, and draw-plus-swap time in native diagnostics.
-- [ ] Build the current branch and verify on Xiaomi Pad 5 Pro that GLES is actually active, output orientation/aspect/color match the CPU preview, and the Surface lifecycle is stable.
-- [ ] Compare diagnostic measurements before treating the GPU path as validated. `glTexImage2D/glTexSubImage2D` timing is CPU time inside the GL upload calls, not a GPU hardware timer; draw-plus-swap includes any `eglSwapBuffers` wait and is not pure shader execution time.
+- [x] Device report confirmed GLES3 GPU pass-through active: 4272 frames submitted, 4269 swaps, 2 replaced frames, zero GL/EGL error.
+- [x] Separate upload-call and draw-plus-swap timings are present. `glTexImage2D/glTexSubImage2D` timing is CPU time inside the GL upload calls, not a GPU hardware timer; draw-plus-swap includes any `eglSwapBuffers` wait and is not pure shader execution time.
+- [ ] Verify output orientation/aspect/color against the CPU preview and validate Surface recreation under the current diagnostics.
 
 ### Phase B - FSR 1 shaders
-- Port the upstream EASU and RCAS shader logic to GLSL ES 3.1 compute shaders compatible with the Android GLES implementation, or use a Vulkan compute backend if the GLES path cannot meet correctness/performance requirements.
-- Preserve AMD's MIT copyright/license notice and include the upstream license in THIRD_PARTY_NOTICES.
-- EASU only for 720p -> 1080p. RCAS only for native 1080p sharpening.
-- Expose sharpening attenuation as a conservative user setting; do not hard-code maximum sharpening.
-- Validate shader output against AMD reference images/test vectors before enabling it for live preview.
+- [x] Vendor the official AMD `ffx_a.h`, `ffx_fsr1.h` and MIT license; embed the headers into runtime GLSL source so no non-standard shader include extension is required.
+- [x] Add an opt-in, native-1080p RCAS fragment pass behind a UI toggle. Default remains off; initial sharpening attenuation is conservative (2.5 stops).
+- [x] Add RCAS availability, applied-frame and CPU draw-call timing diagnostics. The CPU draw-call timing is not a GPU hardware timer.
+- [ ] Build and device-test the RCAS shader on Adreno 650; compare fine text, grayscale ramps, edges and MJPEG ringing with FSR off/on.
+- [ ] Implement EASU for 1280x720 -> 1920x1080, followed by RCAS. Native 1920x1080 should skip EASU and run RCAS only.
+- [ ] Add a real user-adjustable conservative sharpening attenuation control after the initial visual quality test.
+- [ ] Validate shader output against AMD reference images/test vectors before enabling it for live preview.
 
 ### Phase C - device validation
 - Confirm the capture card actually negotiates 1280x720 at a stable frame rate; do not synthesize a 720p input by downscaling 1080p for the upscale quality test.
@@ -75,5 +78,6 @@ The first FSR integration therefore needs a separate GPU-backed renderer rather 
 - [x] CPU time spent in GL texture upload calls and draw-plus-`eglSwapBuffers` time.
 - [ ] Input/output dimensions and actual preview FPS on the GLES thread.
 - [ ] GPU timer-query measurements if supported; otherwise clearly retain CPU-side GL call timings.
-- [ ] EASU / RCAS timings and FSR mode after those shader passes are implemented.
+- [x] Native 1080p RCAS mode, availability, applied-frame count and CPU draw-call time.
+- [ ] EASU timings and 720p-to-1080p FSR mode.
 - [ ] GPU renderer/vendor/version and detailed shader compile errors.
