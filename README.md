@@ -1,16 +1,16 @@
-# ITX Display v0.5.3
+# ITX Display v0.5.5
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.5.3 (versionCode 14)
+- Application version: 0.5.5 (versionCode 16)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - Native ABI: arm64-v8a only (Snapdragon 870 / ARM64 target)
 - minSdk: 24
 - JDK: 17
-- UVC engine dependency: `io.github.mikimn:droiduvc:0.2.1`
+- UVC engine: locally maintained `libraries/droiduvc` module based on droiduvc 0.2.1
 - Preferred input: MJPEG
 - Requested mode: 1920x1080 at 50 FPS; actual negotiated mode is reported in the information panel
 - Audio: not yet implemented
@@ -232,3 +232,11 @@ A 50 FPS report showed 1,284 callbacks and 1,284 analyzed frames with zero app-s
 
 - Restrict both the app and local droiduvc native build to `arm64-v8a`; x86_64 is not packaged for the target Snapdragon 870 tablet.
 - No changes to the UVC brightness, contrast, saturation or hue controls are made automatically.
+
+
+## v0.5.5 frame-cadence and queue-latency diagnostics
+
+- Added callback inter-frame interval average and maximum measurements using Android's monotonic clock.
+- Added a separate capture-timestamp cadence measurement when libuvc supplies positive, strictly increasing capture-finished timestamps; devices/backends that do not supply usable timestamps are reported explicitly.
+- Added average and maximum time from raw-frame callback entry to analysis-worker start. This includes payload copying and queue wait, and is not presented as end-to-end display latency.
+- These metrics establish the timing budget for the next frame-interpolation prototype. They do not perform interpolation, add a display-buffering frame, or change the existing preview path.

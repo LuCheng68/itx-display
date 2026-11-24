@@ -52,7 +52,14 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
     private volatile double averageFrameBytes;
     private volatile double callbackFps;
     private volatile double analysisFps;
+    private volatile double averageCallbackIntervalMs;
+    private volatile double maxCallbackIntervalMs;
+    private volatile double averageCaptureIntervalMs;
+    private volatile long captureTimestampSamples;
+    private volatile double averageQueueWaitMs;
+    private volatile double maxQueueWaitMs;
     private long previousCallbackNs;
+    private long previousCaptureTimeNs;
     private volatile long latestSequence = -1;
     private volatile int latestFormatCode = -1;
     private volatile int callbackTid = -1;
@@ -84,10 +91,26 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
         callbackCount.incrementAndGet();
         final long callbackNowNs = System.nanoTime();
         if (previousCallbackNs != 0 && callbackNowNs > previousCallbackNs) {
-            double instantFps = 1_000_000_000.0 / (callbackNowNs - previousCallbackNs);
+            long intervalNs = callbackNowNs - previousCallbackNs;
+            double intervalMs = intervalNs / 1_000_000.0;
+            double instantFps = 1_000_000_000.0 / intervalNs;
             callbackFps = callbackFps == 0 ? instantFps : callbackFps * 0.8 + instantFps * 0.2;
+            averageCallbackIntervalMs = averageCallbackIntervalMs == 0
+                    ? intervalMs : averageCallbackIntervalMs * 0.8 + intervalMs * 0.2;
+            maxCallbackIntervalMs = Math.max(maxCallbackIntervalMs, intervalMs);
         }
         previousCallbackNs = callbackNowNs;
+        // libuvc may not provide a capture timestamp for every backend/device. Only
+        // calculate cadence from positive, strictly increasing timestamps.
+        if (captureTimeNs > 0) {
+            if (previousCaptureTimeNs > 0 && captureTimeNs > previousCaptureTimeNs) {
+                double intervalMs = (captureTimeNs - previousCaptureTimeNs) / 1_000_000.0;
+                averageCaptureIntervalMs = averageCaptureIntervalMs == 0
+                        ? intervalMs : averageCaptureIntervalMs * 0.8 + intervalMs * 0.2;
+                captureTimestampSamples++;
+            }
+            previousCaptureTimeNs = captureTimeNs;
+        }
         final int size = data.remaining();
         if (size <= 0 || size > MAX_FRAME_BYTES) {
             droppedCount.incrementAndGet();
@@ -169,6 +192,11 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
                 if (slot == null) continue;
 
                 try {
+                    long queueWaitNs = Math.max(0L, System.nanoTime() - slot.callbackTimeNs);
+                    double queueWaitMs = queueWaitNs / 1_000_000.0;
+                    averageQueueWaitMs = averageQueueWaitMs == 0
+                            ? queueWaitMs : averageQueueWaitMs * 0.8 + queueWaitMs * 0.2;
+                    maxQueueWaitMs = Math.max(maxQueueWaitMs, queueWaitMs);
                     analyzedCount.incrementAndGet();
                     latestFrameBytes = slot.size;
                     if (averageFrameBytes == 0) averageFrameBytes = slot.size;
@@ -231,6 +259,11 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
                 + "\n平均压缩帧大小：" + String.format(Locale.US, "%.1f KB", averageFrameBytes / 1024.0)
                 + "\nUVC 回调线程 TID：" + callbackTid
                 + "\n分析线程 TID：" + analyzerTid
+                + "\n回调帧间隔：" + String.format(Locale.US, "均值 %.2f ms / 最大 %.2f ms", averageCallbackIntervalMs, maxCallbackIntervalMs)
+                + "\n设备采集时间戳：" + (captureTimestampSamples > 0
+                        ? String.format(Locale.US, "有效间隔样本 %d / 平均 %.2f ms", captureTimestampSamples, averageCaptureIntervalMs)
+                        : "设备未提供可用的递增时间戳")
+                + "\n回调到分析开始等待：" + String.format(Locale.US, "均值 %.2f ms / 最大 %.2f ms", averageQueueWaitMs, maxQueueWaitMs)
                 + "\n灰阶探测：" + grayProbeResult;
     }
 
