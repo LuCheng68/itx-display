@@ -1,10 +1,10 @@
-# ITX Display v0.5.1
+# ITX Display v0.5.2
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.5.1 (versionCode 12)
+- Application version: 0.5.2 (versionCode 13)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - minSdk: 24
@@ -186,3 +186,12 @@ Interpretation: all four readable controls are currently at the device-reported 
 - Disabled unused libjpeg-turbo tools and tests in the Android build.
 - Separated live raw-UVC metrics from the manual UVC color-control diagnostic text. FPS updates no longer overwrite the color-control values shown after the user taps “Read UVC color controls”.
 - This is a performance hypothesis supported by the build flags, not yet a verified FPS improvement. The current preview is still CPU MJPEG decode + RGB conversion + CPU blit; GPU shader rendering is not implemented yet.
+
+
+## v0.5.2 Snapdragon 870 diagnostics and RGB highlight probe
+
+- Added native timing counters for the raw-frame observer/JNI copy, MJPEG-to-RGB decode, Surface lock/blit/post, and total native frame callback. The counters are cumulative and presented as averages plus the decode maximum; this identifies the actual hot stage before applying CPU affinity or adding worker threads.
+- The raw-frame header analyzer now runs at Android background thread priority. No CPU-core affinity is forced: Android/Qualcomm's scheduler remains free to place threads on the appropriate Kryo 585 cluster.
+- Added a user-triggered one-frame grayscale chart probe. It decodes only one selected MJPEG frame at half resolution on the background analysis worker and samples ten fixed patch centers (expected values 16, 32, 64, 96, 128, 160, 192, 220, 240, 255). It does not add continuous JPEG decoding to the 50 FPS path.
+- This probe distinguishes whether the USB MJPEG payload still contains separable highlight levels. If the 220/240/255 samples collapse inside the raw MJPEG decode, the clipping happened before Android rendering; if they remain separated, investigate the existing native conversion and Surface display path.
+- No automatic RGB range compensation has been enabled. Black appearing normal while highlights collapse is consistent with high-end clipping, but it is not sufficient evidence to choose Full/Limited expansion blindly.

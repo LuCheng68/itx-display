@@ -10,7 +10,9 @@
 #include "stream_mode.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -35,7 +37,15 @@ struct Camera {
     jobject rawFrameListener = nullptr;
     jmethodID rawFrameCallback = nullptr;
     int failedFrames = 0;
-    long frames = 0;
+    uint64_t frameCount = 0;
+    uint64_t observerTotalNs = 0;
+    uint64_t observerMaxNs = 0;
+    uint64_t decodeTotalNs = 0;
+    uint64_t decodeMaxNs = 0;
+    uint64_t blitTotalNs = 0;
+    uint64_t blitMaxNs = 0;
+    uint64_t totalFrameNs = 0;
+    uint64_t totalFrameMaxNs = 0;
     std::mutex mutex;
 };
 
@@ -201,35 +211,42 @@ void onFrame(uvc_frame_t *frame, void *user) {
     auto *cam = static_cast<Camera *>(user);
     std::lock_guard<std::mutex> lock(cam->mutex);
     if (!cam->window) {
-        if (cam->failedFrames++ < 5) {
-            LOGE("Frame arrived but no window");
-        }
+        if (cam->failedFrames++ < 5) LOGE("Frame arrived but no window");
         return;
     }
 
+    using Clock = std::chrono::steady_clock;
+    const auto frameStart = Clock::now();
+
+    const auto observerStart = Clock::now();
     // Observe the raw UVC payload before conversion to RGB.
     dispatchRawFrame(cam, frame);
+    const uint64_t observerNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - observerStart).count());
+    cam->observerTotalNs += observerNs;
+    cam->observerMaxNs = std::max(cam->observerMaxNs, observerNs);
 
     if (!cam->rgb || cam->rgb->width != frame->width || cam->rgb->height != frame->height) {
         if (cam->rgb) uvc_free_frame(cam->rgb);
         cam->rgb = uvc_allocate_frame(frame->width * frame->height * 3);
     }
-
     if (!cam->rgb) return;
+
+    const auto decodeStart = Clock::now();
     uvc_error_t err = uvc_any2rgb(frame, cam->rgb);
+    const uint64_t decodeNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - decodeStart).count());
+    cam->decodeTotalNs += decodeNs;
+    cam->decodeMaxNs = std::max(cam->decodeMaxNs, decodeNs);
     if (err != UVC_SUCCESS) {
-        // Corrupt frames are common right after a stream starts; log only a few.
-        if (cam->failedFrames++ < 5) {
-            LOGE("Dropping frame: %s", uvc_strerror(err));
-        }
+        if (cam->failedFrames++ < 5) LOGE("Dropping frame: %s", uvc_strerror(err));
         return;
     }
 
+    const auto blitStart = Clock::now();
     ANativeWindow_Buffer buf;
     if (ANativeWindow_lock(cam->window, &buf, nullptr) != 0) {
-        if (cam->failedFrames++ < 5) {
-            LOGE("ANativeWindow_lock failed");
-        }
+        if (cam->failedFrames++ < 5) LOGE("ANativeWindow_lock failed");
         return;
     }
 
@@ -237,6 +254,17 @@ void onFrame(uvc_frame_t *frame, void *user) {
                             cam->rgb->width, cam->rgb->height, static_cast<uint8_t *>(buf.bits),
                             static_cast<size_t>(buf.stride) * 4, buf.width, buf.height);
     ANativeWindow_unlockAndPost(cam->window);
+
+    const uint64_t blitNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - blitStart).count());
+    cam->blitTotalNs += blitNs;
+    cam->blitMaxNs = std::max(cam->blitMaxNs, blitNs);
+
+    const uint64_t totalNs = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - frameStart).count());
+    cam->totalFrameNs += totalNs;
+    cam->totalFrameMaxNs = std::max(cam->totalFrameMaxNs, totalNs);
+    ++cam->frameCount;
 }
 
 void releaseWindow(Camera *cam) {
@@ -482,6 +510,27 @@ Java_com_mikimn_droiduvc_NativeUvc_deviceStrings(JNIEnv *env, jobject, jlong han
             env->DeleteLocalRef(text);
         }
     }
+    return result;
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_mikimn_droiduvc_NativeUvc_performanceStats(JNIEnv *env, jobject, jlong handle) {
+    auto *cam = reinterpret_cast<Camera *>(handle);
+    if (cam == nullptr) return nullptr;
+    std::lock_guard<std::mutex> lock(cam->mutex);
+    const jlong values[9] = {
+            static_cast<jlong>(cam->frameCount),
+            static_cast<jlong>(cam->observerTotalNs),
+            static_cast<jlong>(cam->observerMaxNs),
+            static_cast<jlong>(cam->decodeTotalNs),
+            static_cast<jlong>(cam->decodeMaxNs),
+            static_cast<jlong>(cam->blitTotalNs),
+            static_cast<jlong>(cam->blitMaxNs),
+            static_cast<jlong>(cam->totalFrameNs),
+            static_cast<jlong>(cam->totalFrameMaxNs)
+    };
+    jlongArray result = env->NewLongArray(9);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 9, values);
     return result;
 }
 

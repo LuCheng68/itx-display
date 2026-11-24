@@ -148,6 +148,17 @@ class UvcCamera internal constructor(private val native: UvcNative, private var 
         return StreamMode.fromInts(native.start(handle, surface, width, height, fps, preferredFormat?.code ?: -1))
     }
 
+    /**
+     * Returns native cumulative timing counters:
+     * frame count, observer total/max ns, JPEG decode total/max ns,
+     * Surface blit total/max ns, and end-to-end callback total/max ns.
+     */
+    @Synchronized
+    fun performanceStats(): LongArray {
+        check(handle != 0L) { "Camera is closed" }
+        return native.performanceStats(handle)
+    }
+
     /** Streams the given [mode] (see [supportedModes]); returns the mode actually negotiated. */
     fun start(surface: Surface, mode: StreamMode): StreamMode =
         start(surface, mode.width, mode.height, mode.fps, mode.format)

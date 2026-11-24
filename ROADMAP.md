@@ -1,6 +1,6 @@
 # ITX Display — Roadmap & Technical Overview
 
-> 文档版本：2.0  
+> 文档版本：2.1  
 > 更新日期：2026-11-24  
 > 项目代号：ITX Display
 
@@ -285,6 +285,8 @@ USB 视频采集卡（MS2130 / Hagibis）
 **验收重点：** UVC 预览稳定，能够重复测量输入 FPS、显示 FPS 与延迟；不能只显示目标值。
 
 ### v0.5.0 — 低延迟视频处理管线
+
+**v0.5.2 新增诊断：** 原生层分段统计 JNI/原始帧回调、MJPEG 解码、Surface 拷贝/提交和总帧处理耗时；UVC 头部分析线程降为 Android 后台优先级，不对 CPU 核心做硬绑定。新增用户主动触发的单帧灰阶图探测：仅解码一帧 MJPEG（半分辨率），采样 16/32/64/96/128/160/192/220/240/255 十级灰阶中心。探测不进入持续 50 FPS 热路径。该数据用于区分高光是否在 USB MJPEG 负载中已经剪切，还是在 Android 后续转换/显示中出现异常。尚未自动启用 RGB 范围补偿。
 
 **v0.5.1 性能修正：** Android Debug APK 中也对 MJPEG 解码、libuvc、libusb 和 RGB blit 热路径启用 `-O2`；libjpeg-turbo 改为 Release 构建并关闭不需要的 tools/tests。实时 UVC 指标移入独立区域，不再覆盖手动读取的色彩控件诊断。该优化仍需在小米平板上实测 FPS 与 CPU 占用。当前显示链路仍为 CPU 解码/转换/拷贝，GPU Shader 尚未接入。
 

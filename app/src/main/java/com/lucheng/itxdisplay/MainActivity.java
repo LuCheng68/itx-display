@@ -68,11 +68,14 @@ public class MainActivity extends Activity {
     private TextView pipelineStatusView;
     private Button colorReadButton;
     private Button copyDiagnosticsButton;
+    private Button grayProbeButton;
     private Button infoToggle;
     private volatile String baseDiagnosticsReport = "尚未连接 UVC 设备。";
     private volatile String diagnosticsReport = "尚未连接 UVC 设备。";
     private volatile boolean readingColorControls = false;
     private volatile RawUvcFramePipeline rawFramePipeline;
+    private volatile boolean nativePerfReadPending = false;
+    private volatile String nativePerfSummary = "原生阶段耗时：等待统计";
     private boolean videoInfoVisible = false;
     private int videoWidth = TARGET_WIDTH;
     private int videoHeight = TARGET_HEIGHT;
@@ -283,6 +286,14 @@ public class MainActivity extends Activity {
         actionRow.addView(copyDiagnosticsButton, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         panel.addView(actionRow);
+
+        grayProbeButton = new Button(this);
+        grayProbeButton.setText("抓取一帧灰阶诊断");
+        grayProbeButton.setTextSize(12);
+        grayProbeButton.setAllCaps(false);
+        grayProbeButton.setOnClickListener(v -> requestGrayPatchProbe());
+        panel.addView(grayProbeButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         Button scanButton = new Button(this);
         scanButton.setText("重新扫描 USB 设备");
@@ -773,6 +784,60 @@ public class MainActivity extends Activity {
         previewView.setTransform(null);
     }
 
+    private void requestGrayPatchProbe() {
+        RawUvcFramePipeline pipeline = rawFramePipeline;
+        if (pipeline == null || !previewRunning) {
+            showStatus("请先连接并启动 UVC 预览。");
+            return;
+        }
+        if (pipeline.requestGrayPatchProbe()) {
+            showStatus("已请求灰阶探测；请确保电脑正在全屏显示灰阶测试图。");
+        } else {
+            showStatus("灰阶探测已在等待或执行，请稍后查看结果。");
+        }
+    }
+
+    private void requestNativePerformanceStats() {
+        if (nativePerfReadPending || executorShutdown || !previewRunning) return;
+        nativePerfReadPending = true;
+        try {
+            cameraExecutor.execute(() -> {
+                String summary = "原生阶段耗时：暂不可用";
+                try {
+                    UvcCamera activeCamera = camera;
+                    if (activeCamera != null) {
+                        long[] stats = activeCamera.performanceStats();
+                        if (stats != null && stats.length >= 9 && stats[0] > 0) {
+                            double frames = stats[0];
+                            summary = String.format(Locale.US,
+                                    "原生耗时均值：JNI %.2f ms · MJPEG解码 %.2f ms · Surface拷贝 %.2f ms · 总计 %.2f ms；解码峰值 %.2f ms",
+                                    stats[1] / frames / 1_000_000.0,
+                                    stats[3] / frames / 1_000_000.0,
+                                    stats[5] / frames / 1_000_000.0,
+                                    stats[7] / frames / 1_000_000.0,
+                                    stats[4] / 1_000_000.0);
+                        }
+                    }
+                } catch (Exception e) {
+                    summary = "原生阶段耗时读取失败：" + e.getClass().getSimpleName();
+                }
+                final String result = summary;
+                mainHandler.post(() -> {
+                    nativePerfReadPending = false;
+                    nativePerfSummary = result;
+                    RawUvcFramePipeline pipeline = rawFramePipeline;
+                    if (pipelineStatusView != null && previewRunning) {
+                        pipelineStatusView.setText((pipeline == null
+                                ? "实时 UVC 状态：等待视频帧" : pipeline.getDetailedReport())
+                                + "\\n" + nativePerfSummary);
+                    }
+                });
+            });
+        } catch (RejectedExecutionException e) {
+            nativePerfReadPending = false;
+        }
+    }
+
     private void updateDisplayFps() {
         long now = android.os.SystemClock.elapsedRealtime();
         if (fpsWindowStart == 0L) fpsWindowStart = now;
@@ -788,9 +853,11 @@ public class MainActivity extends Activity {
                 statsView.setText("显示：" + formatFps(displayedFps) + " FPS\n" + rawSummary);
             }
             if (pipelineStatusView != null && previewRunning) {
-                pipelineStatusView.setText(pipeline == null
-                        ? "实时 UVC 状态：等待视频帧" : pipeline.getDetailedReport());
+                pipelineStatusView.setText((pipeline == null
+                        ? "实时 UVC 状态：等待视频帧" : pipeline.getDetailedReport())
+                        + "\\n" + nativePerfSummary);
             }
+            requestNativePerformanceStats();
         }
     }
 

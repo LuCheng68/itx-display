@@ -2,6 +2,10 @@ package com.lucheng.itxdisplay;
 
 import com.mikimn.droiduvc.RawFrameListener;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.os.Process;
+
 import java.nio.ByteBuffer;
 import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -36,6 +40,7 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
     private final ArrayBlockingQueue<FrameSlot> freeSlots = new ArrayBlockingQueue<>(POOL_SIZE);
     private final ArrayBlockingQueue<FrameSlot> readySlots = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicBoolean running = new AtomicBoolean(true);
+    private final AtomicBoolean grayProbeRequested = new AtomicBoolean(false);
     private final AtomicLong callbackCount = new AtomicLong();
     private final AtomicLong droppedCount = new AtomicLong();
     private final AtomicLong analyzedCount = new AtomicLong();
@@ -50,6 +55,9 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
     private long previousCallbackNs;
     private volatile long latestSequence = -1;
     private volatile int latestFormatCode = -1;
+    private volatile int callbackTid = -1;
+    private volatile int analyzerTid = -1;
+    private volatile String grayProbeResult = "未执行";
 
     public RawUvcFramePipeline() {
         for (int i = 0; i < POOL_SIZE; i++) {
@@ -72,6 +80,7 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
                         long sequence,
                         long captureTimeNs) {
         if (!running.get() || data == null) return;
+        callbackTid = Process.myTid();
         callbackCount.incrementAndGet();
         final long callbackNowNs = System.nanoTime();
         if (previousCallbackNs != 0 && callbackNowNs > previousCallbackNs) {
@@ -137,7 +146,19 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
         return Math.max(required, Math.min(capacity, MAX_FRAME_BYTES));
     }
 
+    public boolean requestGrayPatchProbe() {
+        if (!running.get()) return false;
+        grayProbeResult = "已请求，等待下一帧 MJPEG";
+        return grayProbeRequested.compareAndSet(false, true);
+    }
+
     private void runWorker() {
+        try {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+        } catch (RuntimeException ignored) {
+            // Keep the analyzer alive with the inherited scheduler priority if denied.
+        }
+        analyzerTid = Process.myTid();
         long windowStartNs = System.nanoTime();
         long previousArrivalNs = 0;
         long previousSequence = -1;
@@ -160,6 +181,9 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
                     latestSequence = slot.sequence;
 
                     jpegDescription = parseJpegHeader(slot.bytes, slot.size);
+                    if (grayProbeRequested.compareAndSet(true, false)) {
+                        grayProbeResult = analyzeGrayPatches(slot.bytes, slot.size);
+                    }
                     if (previousArrivalNs != 0 && slot.callbackTimeNs > previousArrivalNs) {
                         long interval = slot.callbackTimeNs - previousArrivalNs;
                         double instantFps = 1_000_000_000.0 / interval;
@@ -205,6 +229,67 @@ public final class RawUvcFramePipeline implements RawFrameListener, AutoCloseabl
                 + "\n最近序号：" + latestSequence
                 + "\nUVC format code：" + latestFormatCode
                 + "\n平均压缩帧大小：" + String.format(Locale.US, "%.1f KB", averageFrameBytes / 1024.0);
+    }
+
+    /**
+     * Decodes one requested JPEG frame only, at half resolution, and samples the centers
+     * of the ten equal-width neutral patches in itx_display_rgb_grayscale_test.png.
+     * This diagnostic is user-triggered and is not part of the 50 FPS hot path.
+     */
+    private static String analyzeGrayPatches(byte[] data, int size) {
+        Bitmap bitmap = null;
+        try {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = 2;
+            options.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            bitmap = BitmapFactory.decodeByteArray(data, 0, size, options);
+            if (bitmap == null || bitmap.getWidth() < 100 || bitmap.getHeight() < 100) {
+                return "灰阶探测失败：当前负载无法解码为 JPEG";
+            }
+
+            final int[] expected = {16, 32, 64, 96, 128, 160, 192, 220, 240, 255};
+            final int width = bitmap.getWidth();
+            final int height = bitmap.getHeight();
+            final int yCenter = height / 2;
+            final int xRadius = Math.max(2, width / 120);
+            final int yRadius = Math.max(2, height / 80);
+            StringBuilder result = new StringBuilder("期望→实测灰阶（每个样本为中心小区域 RGB 均值）：");
+
+            int[] measured = new int[expected.length];
+            for (int patch = 0; patch < expected.length; patch++) {
+                int xCenter = (int) ((patch + 0.5f) * width / expected.length);
+                long sum = 0;
+                long count = 0;
+                for (int y = Math.max(0, yCenter - yRadius);
+                     y < Math.min(height, yCenter + yRadius + 1); y++) {
+                    for (int x = Math.max(0, xCenter - xRadius);
+                         x < Math.min(width, xCenter + xRadius + 1); x++) {
+                        int pixel = bitmap.getPixel(x, y);
+                        int red = (pixel >> 16) & 0xFF;
+                        int green = (pixel >> 8) & 0xFF;
+                        int blue = pixel & 0xFF;
+                        sum += (red + green + blue) / 3;
+                        count++;
+                    }
+                }
+                measured[patch] = count == 0 ? -1 : (int) Math.round((double) sum / count);
+                if (patch > 0) result.append("；");
+                result.append(expected[patch]).append("→").append(measured[patch]);
+            }
+
+            if (measured[7] >= 248 && measured[8] >= 248 && measured[9] >= 248) {
+                result.append("；高光端疑似剪切（220/240/255 已接近同值）");
+            } else if (measured[7] >= 248 && measured[8] >= 248) {
+                result.append("；220 与 240 灰阶疑似合并");
+            } else {
+                result.append("；高光阶梯仍有可测差异，需与画面观感及 YCbCr 基线比较");
+            }
+            return result.toString();
+        } catch (RuntimeException e) {
+            return "灰阶探测异常：" + e.getClass().getSimpleName();
+        } finally {
+            if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+        }
     }
 
     private static String parseJpegHeader(byte[] data, int size) {
