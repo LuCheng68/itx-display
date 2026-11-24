@@ -1181,7 +1181,7 @@ public class MainActivity extends Activity {
                                     stats[5] / frames / 1_000_000.0,
                                     stats[7] / frames / 1_000_000.0,
                                     stats[4] / 1_000_000.0);
-                            if (stats.length >= 23) {
+                            if (stats.length >= 24) {
                                 long submitted = stats[10];
                                 long presented = stats[11];
                                 long replaced = stats[12];
@@ -1204,12 +1204,13 @@ public class MainActivity extends Activity {
                                     double fsrDivisor = Math.max(1L, fsrFrames);
                                     summary += String.format(Locale.US,
                                             "\\nFSR1 RCAS：%s · 着色器可用=%s · 应用帧 %d"
-                                                    + " · RCAS绘制调用均值 %.2f ms / 峰值 %.2f ms",
+                                                    + " · RCAS绘制调用均值 %.2f ms / 峰值 %.2f ms · 初始化阶段错误码 %d",
                                             fsrActive ? "已启用" : "关闭",
                                             fsrAvailable ? "是" : "否",
                                             fsrFrames,
                                             stats[19] / fsrDivisor / 1_000_000.0,
-                                            stats[20] / 1_000_000.0);
+                                            stats[20] / 1_000_000.0,
+                                            stats[23]);
                                 } else {
                                     summary += "\\n预览后端：CPU Surface · GLES未启用/初始化失败";
                                 }
