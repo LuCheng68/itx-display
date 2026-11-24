@@ -17,7 +17,7 @@ ExternalProject_Add(libjpeg-turbo-build
             -DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}
             -DANDROID_ABI=${ANDROID_ABI}
             -DANDROID_PLATFORM=${ANDROID_PLATFORM}
-            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            -DCMAKE_BUILD_TYPE=Release
             -DCMAKE_INSTALL_PREFIX=${JPEG_PREFIX}
             -DCMAKE_INSTALL_LIBDIR=lib
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
@@ -25,6 +25,8 @@ ExternalProject_Add(libjpeg-turbo-build
             -DENABLE_STATIC=ON
             -DWITH_TURBOJPEG=OFF
             -DWITH_JAVA=OFF
+            -DWITH_TOOLS=OFF
+            -DWITH_TESTS=OFF
         BUILD_BYPRODUCTS ${JPEG_LIBRARY_FILE})
 
 file(MAKE_DIRECTORY ${JPEG_INCLUDE_DIR})

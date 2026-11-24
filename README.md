@@ -1,10 +1,10 @@
-# ITX Display v0.5.0
+# ITX Display v0.5.1
 
 Low-latency Android USB UVC video capture and display software focused on real-time frame interpolation and super-resolution for Xiaomi Pad 5 Pro (Android 15).
 
 ## Target configuration
 
-- Application version: 0.5.0 (versionCode 11)
+- Application version: 0.5.1 (versionCode 12)
 - Language: Java (Android UI and application layer)
 - compileSdk / targetSdk: 35
 - minSdk: 24
@@ -178,3 +178,11 @@ Interpretation: all four readable controls are currently at the device-reported 
 - Added an app-side three-slot reusable buffer pool and a two-frame bounded latest-frame queue. When full, the oldest queued analysis frame is discarded instead of building latency.
 - Added a worker-side MJPEG header parser that reports JPEG chroma sampling (4:2:0 / 4:2:2 / 4:4:4 when present), frame size, callback FPS, analysis FPS, sequence gaps and queue drops.
 - The original droiduvc Surface preview remains active in parallel. This is the raw payload acquisition/queue foundation only: it does not yet decode the raw payload for display, perform RGB range correction, or run GPU color conversion/interpolation.
+
+
+## v0.5.1 native performance and diagnostics UI
+
+- The Codemagic build log showed the locally built libjpeg-turbo using CMAKE_BUILD_TYPE=Debug with no optimization flags. The native video hot path is now explicitly compiled with `-O2` in debuggable APKs: libjpeg-turbo is built as Release; libusb, libuvc, droiduvc and the RGB blitter are optimized.
+- Disabled unused libjpeg-turbo tools and tests in the Android build.
+- Separated live raw-UVC metrics from the manual UVC color-control diagnostic text. FPS updates no longer overwrite the color-control values shown after the user taps “Read UVC color controls”.
+- This is a performance hypothesis supported by the build flags, not yet a verified FPS improvement. The current preview is still CPU MJPEG decode + RGB conversion + CPU blit; GPU shader rendering is not implemented yet.

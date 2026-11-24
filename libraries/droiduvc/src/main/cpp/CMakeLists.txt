@@ -43,6 +43,7 @@ set(DROIDUVC_LIBUVC_SOURCE_DIR ${droiduvc_libuvc_SOURCE_DIR})
 # static target; libuvc is added as a subdirectory after both targets exist.
 include(cmake/libjpeg-turbo.cmake)
 include(cmake/libusb.cmake)
+target_compile_options(usb-1.0 PRIVATE -O2)
 
 set(JPEG_FOUND TRUE)
 set(CMAKE_BUILD_TARGET Static CACHE STRING "" FORCE)
@@ -51,7 +52,15 @@ set(CMAKE_SKIP_INSTALL_RULES ON)
 add_subdirectory(${DROIDUVC_LIBUVC_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/libuvc EXCLUDE_FROM_ALL)
 unset(CMAKE_SKIP_INSTALL_RULES)
 
+# Debug APKs must still use optimized native video code. MJPEG decode and RGB
+# conversion run on CPU until the GPU texture path is implemented.
+if(TARGET uvc_static)
+    target_compile_options(uvc_static PRIVATE -O2)
+endif()
+
 add_subdirectory(core)
+target_compile_options(droiduvc_core PRIVATE -O2)
 
 add_library(droiduvc SHARED uvc_camera.cpp)
+target_compile_options(droiduvc PRIVATE -O2)
 target_link_libraries(droiduvc PRIVATE droiduvc_core LibUVC::UVCStatic usb-1.0 android log)

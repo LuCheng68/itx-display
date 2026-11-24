@@ -17,7 +17,7 @@ add_library(usb-1.0 STATIC
 target_include_directories(usb-1.0
         PRIVATE ${LIBUSB_ROOT}/android ${LIBUSB_ROOT}/libusb ${LIBUSB_ROOT}/libusb/os
         PUBLIC ${LIBUSB_ROOT}/libusb)
-target_compile_options(usb-1.0 PRIVATE -fvisibility=hidden -pthread)
+target_compile_options(usb-1.0 PRIVATE -O2 -fvisibility=hidden -pthread)
 target_link_libraries(usb-1.0 PRIVATE log)
 
 add_library(LibUSB::LibUSB ALIAS usb-1.0)

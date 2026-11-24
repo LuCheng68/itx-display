@@ -65,6 +65,7 @@ public class MainActivity extends Activity {
     private TextView modeView;
     private TextView statsView;
     private TextView diagnosticsView;
+    private TextView pipelineStatusView;
     private Button colorReadButton;
     private Button copyDiagnosticsButton;
     private Button infoToggle;
@@ -244,6 +245,13 @@ public class MainActivity extends Activity {
         diagnosticsView.setTextSize(11);
         diagnosticsView.setPadding(0, dp(4), 0, dp(8));
         panelContent.addView(diagnosticsView);
+
+        pipelineStatusView = new TextView(this);
+        pipelineStatusView.setText("实时 UVC 状态：等待视频帧");
+        pipelineStatusView.setTextColor(0xFF8FD3A5);
+        pipelineStatusView.setTextSize(11);
+        pipelineStatusView.setPadding(0, dp(4), 0, dp(8));
+        panelContent.addView(pipelineStatusView);
 
         TextView target = new TextView(this);
         target.setText("目标：1920×1080 · 50 FPS · MJPEG 优先 · 无音频");
@@ -779,8 +787,9 @@ public class MainActivity extends Activity {
             if (statsView != null) {
                 statsView.setText("显示：" + formatFps(displayedFps) + " FPS\n" + rawSummary);
             }
-            if (diagnosticsView != null && previewRunning) {
-                diagnosticsView.setText(baseDiagnosticsReport + "\n\n" + rawSummary);
+            if (pipelineStatusView != null && previewRunning) {
+                pipelineStatusView.setText(pipeline == null
+                        ? "实时 UVC 状态：等待视频帧" : pipeline.getDetailedReport());
             }
         }
     }

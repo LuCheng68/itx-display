@@ -3,3 +3,5 @@
 add_library(droiduvc_core STATIC blit.cpp stream_mode.cpp)
 target_include_directories(droiduvc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(droiduvc_core PUBLIC cxx_std_17)
+# Keep frame blitting optimized even in debuggable APKs.
+target_compile_options(droiduvc_core PRIVATE -O2)
