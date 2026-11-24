@@ -1020,12 +1020,17 @@ public class MainActivity extends Activity {
             return;
         }
         final boolean enabled = !fsrEnabled;
+        final boolean stopRifeFirst = enabled && rifeTestEnabled;
+        if (stopRifeFirst) mainHandler.removeCallbacks(rifeAutoStopRunnable);
         if (fsrButton != null) fsrButton.setEnabled(false);
         try {
             cameraExecutor.execute(() -> {
                 try {
                     UvcCamera activeCamera = camera;
                     if (activeCamera == null) throw new IllegalStateException("UVC 会话已结束");
+                    // Avoid running Vulkan RIFE inference and FSR sharpening together;
+                    // preserve the raw 50 FPS preview as the priority.
+                    if (stopRifeFirst) activeCamera.setRifeInferenceEnabled(false);
                     activeCamera.setFsrEnabled(enabled);
                     long[] stats = activeCamera.performanceStats();
                     boolean available = stats != null && stats.length >= 23 && stats[21] != 0;
@@ -1034,6 +1039,16 @@ public class MainActivity extends Activity {
                         throw new IllegalStateException("FSR1 RCAS 着色器不可用，请查看原生日志");
                     }
                     mainHandler.post(() -> {
+                        if (stopRifeFirst) {
+                            rifeTestEnabled = false;
+                            rifeInferenceSummary = "推理测试已停止（FSR 启用时不并行运行 RIFE）";
+                            if (rifeTestButton != null) {
+                                rifeTestButton.setText("启动 RIFE 低分辨率测试（320×180）");
+                            }
+                            if (rifeStatusView != null) {
+                                rifeStatusView.setText(rifeModelSummary + "\\n" + rifeInferenceSummary);
+                            }
+                        }
                         fsrEnabled = enabled;
                         if (fsrButton != null) {
                             fsrButton.setEnabled(previewRunning);
