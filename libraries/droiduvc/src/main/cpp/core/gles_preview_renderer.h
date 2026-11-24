@@ -96,8 +96,8 @@ public:
 
     // {submitted, rendered, replaced, uploadTotalNs, uploadMaxNs,
     //  drawAndPresentTotalNs, drawAndPresentMaxNs, lastError,
-    //  fsrAppliedFrames, fsrDrawCallTotalNs, fsrDrawCallMaxNs, fsrAvailable}
-    std::array<uint64_t, 12> stats() const {
+    //  fsrAppliedFrames, fsrDrawCallTotalNs, fsrDrawCallMaxNs, fsrAvailable, fsrEnabled}
+    std::array<uint64_t, 13> stats() const {
         return {
                 submittedFrames_.load(std::memory_order_relaxed),
                 renderedFrames_.load(std::memory_order_relaxed),
@@ -110,7 +110,8 @@ public:
                 fsrAppliedFrames_.load(std::memory_order_relaxed),
                 fsrDrawCallTotalNs_.load(std::memory_order_relaxed),
                 fsrDrawCallMaxNs_.load(std::memory_order_relaxed),
-                fsrAvailable_.load(std::memory_order_relaxed) ? 1u : 0u
+                fsrAvailable_.load(std::memory_order_relaxed) ? 1u : 0u,
+                fsrEnabled_.load(std::memory_order_relaxed) ? 1u : 0u
         };
     }
 
